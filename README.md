@@ -5,9 +5,9 @@ countinghouse step module: the few lines that matter from a failed CI job: the e
 **Status: preview.** Runs on [countinghouse](https://github.com/mchen6/countinghouse)
 7.2 or later (unreleased at the time of writing). A step module of the countinghouse client packs: a `part`, loaded by a scenario and never listed to the model on its own.
 
-Part of the countinghouse client packs. The design, the plan and the
-acceptance tests live in [ch-packs](https://github.com/mchen6/ch-packs);
-each package has its own repository (maintainer's decision, 2026-11-11).
+Part of the countinghouse client packs. Each package has its own repository; the family's design, plan and
+acceptance tests are in a repository that stays private until the first
+release.
 
 ## Development
 
