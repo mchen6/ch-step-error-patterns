@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "#/",
+  "type": "object",
+  "patternService": {
+    "extract": {
+      "input": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "title": "one job, as ch-step-log-clean returns it",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "lines": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "lines"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "maxLines": {
+            "title": "lines to return at most",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 40
+          },
+          "stepConclusions": {
+            "title": "the job's steps as the jobs API lists them, when known: the failing step is the first failed one",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "conclusion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "number": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "name",
+                "conclusion"
+              ],
+              "additionalProperties": true
+            }
+          }
+        },
+        "required": [
+          "steps"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "failingStep": {
+            "title": "the step holding the exit line, else the last step with an error line",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lines": {
+            "title": "the lines, in log order",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "step": {
+                  "type": "string"
+                },
+                "index": {
+                  "title": "the line index within its step",
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "text": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "error",
+                    "assert",
+                    "stack",
+                    "exit",
+                    "tail"
+                  ]
+                }
+              },
+              "required": [
+                "step",
+                "index",
+                "text",
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "truncated": {
+            "title": "whether lines were left out to stay within maxLines",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "failingStep",
+          "lines",
+          "truncated"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "fault": {
+    "patternService": {
+      "extract": {
+        "fault": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "title": "specific error reason",
+              "type": "string"
+            },
+            "info": {
+              "title": "detailed error info",
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

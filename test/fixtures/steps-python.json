@@ -1,0 +1,36 @@
+{
+  "steps": [
+    {
+      "name": "(top)",
+      "lines": [
+        "Complete job name: test (ubuntu-latest, 3.12)"
+      ]
+    },
+    {
+      "name": "Run pytest -q",
+      "lines": [
+        "pytest -q",
+        "shell: /usr/bin/bash -e {0}",
+        "..F.",
+        "=================================== FAILURES ===================================",
+        "___________________________________ test_parse ___________________________________",
+        "Traceback (most recent call last):",
+        "  File \"/home/runner/work/widgets/widgets/tests/test_parse.py\", line 12, in test_parse",
+        "    assert parse(\"1,2\") == [1, 2, 3]",
+        "  File \"/home/runner/work/widgets/widgets/widgets/parse.py\", line 4, in parse",
+        "  File \"/usr/lib/python3.12/json/__init__.py\", line 346, in loads",
+        "AssertionError: expected [1, 2, 3]",
+        "FAILED tests/test_parse.py::test_parse - AssertionError",
+        "1 failed, 3 passed in 0.12s",
+        "##[error]Process completed with exit code 1."
+      ]
+    },
+    {
+      "name": "Post job cleanup",
+      "lines": [
+        "##[error]The cache could not be saved: Error: tar exited 2",
+        "Cleaning up orphan processes"
+      ]
+    }
+  ]
+}

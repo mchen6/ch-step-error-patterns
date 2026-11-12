@@ -1,0 +1,20 @@
+{
+  "device": {
+    "friendlyName": "ch-step-error-patterns",
+    "manufacturer": "ch-packs",
+    "modelDescription": "Step module of the ch-packs family: picks the few lines that matter out of one failed CI job's cleaned steps. A pure function of its input: no disk, no network, no state.",
+    "serviceList": {
+      "urn:ch-packs:serviceID:patternService": {
+        "actionList": [
+          {
+            "name": "extract",
+            "description": "Takes one job's steps as ch-step-log-clean returns them and returns the lines that explain the failure, each with its step, its index in that step and its kind: 'exit' (Process completed with exit code N, N > 0), 'error' (##[error] lines, error and exception names, 'error' where tools print it as a verdict (npm, tsc, gcc, rustc; not console.error), 'ERROR' (pip, Maven), FAIL/FAILED, panic:, fatal:, TAP 'not ok' without # SKIP or # TODO, node --test's ✖, Jest's ●), 'assert' (an error line that says Assertion or Expected, 'expected … to/but/got', and Jest's expect(…), Expected: and Received: lines), 'stack' (the first two frames after an error; for a Python traceback its head and its two innermost frames) and, when fewer than five lines match, 'tail' (the last fifteen lines of the failing step). Given stepConclusions (the job's steps from the jobs API), the failing step is the first one whose conclusion is failure; otherwise it is the one holding the last exit line, else the last step with an error line, else null. At most maxLines lines (default 40, at most 200), the failing step's kept first (its exit line, then errors and frames in log order); truncated says whether any were left out.",
+            "input": {"schema": "/patternService/extract/input"},
+            "output": {"schema": "/patternService/extract/output"},
+            "fault": {"schema": "/fault/patternService/extract/fault"}
+          }
+        ]
+      }
+    }
+  }
+}

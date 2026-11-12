@@ -1,0 +1,40 @@
+{
+  "steps": [
+    {
+      "name": "(top)",
+      "lines": [
+        "Current runner version: '2.338.2'",
+        "Image: ubuntu-24.04",
+        "Complete job name: test (ubuntu-latest, 24)"
+      ]
+    },
+    {
+      "name": "Run actions/checkout@v4",
+      "lines": [
+        "Syncing repository: example/widgets",
+        "[command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --depth=1 origin"
+      ]
+    },
+    {
+      "name": "Run npm test",
+      "lines": [
+        "> widgets@1.0.0 test",
+        "> node --test",
+        "|",
+        "✖ adds two numbers (2.1ms)",
+        "  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:",
+        "  3 !== 4",
+        "      at TestContext.<anonymous> (/home/runner/work/widgets/widgets/test/add.test.js:7:10)",
+        "##[error]Process completed with exit code 1."
+      ]
+    },
+    {
+      "name": "Post job cleanup",
+      "lines": [
+        "[command]/usr/bin/git version",
+        "git version 2.56.0",
+        "Cleaning up orphan processes"
+      ]
+    }
+  ]
+}
