@@ -112,7 +112,7 @@ test('falls back to the tail when nothing matches', () => {
   const out = extractErrors([{name: '(top)', lines: ['set up']}, {name: 'Run make', lines}, {name: 'Post job cleanup', lines: ['bye']}], 40);
   assert.strictEqual(out.failingStep, null);
   assert.deepStrictEqual(out.lines.map((l) => [l.step, l.index, l.kind]), lines.slice(5).map((_, i) => ['Run make', i + 5, 'tail']));
-  assert.deepStrictEqual(extractErrors([], 40), {failingStep: null, lines: [], truncated: false});
+  assert.deepStrictEqual(extractErrors([], 40), {failingStep: null, lines: [], truncated: false, rules: 2});
 });
 
 test('caps at maxLines and sets truncated, keeping the failing step\'s exit and first errors', () => {
@@ -200,4 +200,93 @@ test('steps as the jobs API lists them are accepted: a null conclusion and the A
   const api = [{name: 'Set up job', status: 'completed', conclusion: 'success', number: 1, started_at: 'x', completed_at: 'y'}, {name: 'Run a', status: 'in_progress', conclusion: null, number: 2}];
   const {output} = await extract({steps: [{name: 'Run a', lines: ['Error: x']}], stepConclusions: api});
   assert.strictEqual(output.failingStep, 'Run a');
+});
+
+// JSON log records (bunyan, pino) and other noise in a dogfood run's error
+// lines (run 43497750749, the reviewer, 2026-11-13): an info record carrying
+// the startup options, the same error record from several processes,
+// an assertion whose message embeds a stderr excerpt with a JSON blob, and
+// Node's own internal frames.
+const record = (o) => JSON.stringify({name: 'countinghouse', hostname: 'runner1', v: 0, time: '2026-11-13T20:03:50.000Z', ...o});
+const nonTail = (out) => out.lines.filter((l) => l.kind !== 'tail');
+
+test('a JSON log record below warn is dropped, from the matches and from the tail', () => {
+  const lines = [record({pid: 1, level: 30, msg: 'module sandbox: m effective permissions {"fs":[],"limits":{"heapMb":256}} error budget'}),
+    record({pid: 1, level: 20, msg: 'debug: an Error happened in a test of errors'})];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(out.lines, []);
+});
+
+test('a JSON log record at error level is its e, else its msg, and is an error whatever it says', () => {
+  const lines = [record({pid: 9612, level: 50, e: "worker exit on error: ENOENT: no such file or directory, realpath 'D:\\a\\lib\\cli-options.js'", msg: '', time: '2026-11-13T20:03:50.857Z'}),
+    record({pid: 9612, level: 50, msg: 'the module stopped', time: '2026-11-13T20:03:51.000Z'}),
+    record({pid: 9612, level: 40, msg: 'a warning about an Error', time: '2026-11-13T20:03:52.000Z'}),
+    record({pid: 9612, level: 40, msg: 'a plain warning', time: '2026-11-13T20:03:53.000Z'})];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.index, l.kind, l.text]), [
+    [0, 'error', "worker exit on error: ENOENT: no such file or directory, realpath 'D:\\a\\lib\\cli-options.js'"],
+    [1, 'error', 'the module stopped'],
+    [2, 'error', 'a warning about an Error']
+  ]);
+  assert.strictEqual(out.lines.find((l) => l.index === 3).text, 'a plain warning', 'a warn record reaches the tail as its text');
+});
+
+test('an e that is an object (an error serializer) is its message', () => {
+  const out = extractErrors([{name: 'Run x', lines: [record({pid: 1, level: 50, err: null, e: {message: 'boom', stack: 'Error: boom\n    at x'}})]}], 40);
+  assert.strictEqual(nonTail(out)[0].text, 'boom');
+});
+
+test('records in one step the same but for pid and time are one line, with repeats beside its text', () => {
+  const e = "worker exit on error: ENOENT: no such file or directory, realpath 'lib/cli-options.js'";
+  const lines = [record({pid: 9612, level: 50, e, msg: '', time: 't1'}), 'other', record({pid: 7600, level: 50, e, msg: '', time: 't2'}),
+    record({pid: 8296, level: 50, e, msg: '', time: 't3'}), record({pid: 8296, level: 50, e: 'a different one', msg: '', time: 't4'})];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.index, l.text, l.repeats]), [[0, e, 3], [4, 'a different one', undefined]]);
+  assert.ok(!out.lines.some((l) => l.index === 2 || l.index === 3), 'the repeats are not in the tail either');
+});
+
+test('a repeat in another step is that step\'s own line', () => {
+  const r = record({pid: 1, level: 50, e: 'the same failure', msg: '', time: 't'});
+  const out = extractErrors([{name: 'Run unit', lines: [r]}, {name: 'Run integration', lines: [r, '##[error]Process completed with exit code 1.']}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.step, l.kind, l.repeats]),
+    [['Run unit', 'error', undefined], ['Run integration', 'error', undefined], ['Run integration', 'exit', undefined]]);
+  assert.strictEqual(out.failingStep, 'Run integration');
+});
+
+test('an object with a level that is not a logger\'s record (no time, or no text field) is an ordinary line', () => {
+  const lines = ['{"level":3,"error":"Expected 2 got 3"}', '{"level":10,"name":"config","time":"t"}'];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(out.lines.map((l) => [l.index, l.text]), [[0, lines[0]], [1, lines[1]]], 'both kept as they are (in the tail)');
+});
+
+test('a record left out ends no traceback and fills no frame window', () => {
+  const info = record({pid: 1, level: 30, msg: 'tick', time: 't'});
+  const py = ['Traceback (most recent call last):', '  File "/a/t.py", line 1, in t', info, '  File "/a/p.py", line 2, in p', '  File "/a/q.py", line 3, in q', 'ValueError: bad'];
+  assert.deepStrictEqual(nonTail(extractErrors([{name: 'Run pytest', lines: py}], 40)).filter((l) => l.kind === 'stack').map((l) => l.index), [0, 3, 4]);
+  const js = ['Error: boom', ...Array.from({length: 12}, () => '    at Module._compile (node:internal/modules/cjs/loader:1929:14)'), '    at a (a.js:1:1)'];
+  assert.deepStrictEqual(nonTail(extractErrors([{name: 'Run x', lines: js}], 40)).map((l) => [l.index, l.kind]), [[0, 'error'], [13, 'stack']]);
+});
+
+test('JSON embedded in a picked line is cut to 200 characters', () => {
+  const blob = JSON.stringify({jobTimeout: 3600000, moduleSandbox: 'audit', more: 'x'.repeat(2000)});
+  const line = `AssertionError [ERR_ASSERTION]: the server exited: stderr ${blob} -- end`;
+  const out = extractErrors([{name: 'Run x', lines: [line]}], 40);
+  const text = nonTail(out)[0].text;
+  const at = line.indexOf('{');
+  assert.strictEqual(text, `${line.slice(0, at + 200)}… (${line.length - at - 200} more characters)`);
+  const short = 'Error: got {"a":1} instead';
+  assert.strictEqual(extractErrors([{name: 'Run x', lines: [short]}], 40).lines[0].text, short, 'a short one is kept whole');
+});
+
+test('Node\'s internal frames are skipped, and do not use up the two frames an error gets', () => {
+  const lines = ['Error: boom', '    at Module._compile (node:internal/modules/cjs/loader:1929:14)', '    at a (a.js:1:1)',
+    '    at node:internal/main/run_main_module:33:47', '    at b (b.js:1:1)', '    at c (c.js:1:1)'];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.index, l.kind]), [[0, 'error'], [2, 'stack'], [4, 'stack']]);
+});
+
+test('the output names its rules version, so a scenario can tell old extractions from new', async () => {
+  assert.strictEqual(extractErrors([{name: 'Run x', lines: ['Error: x']}], 40).rules, 2);
+  const {output} = await extract({steps: [{name: 'Run x', lines: ['Error: x']}]});
+  assert.strictEqual(output.rules, 2);
 });

@@ -105,6 +105,11 @@
                     "exit",
                     "tail"
                   ]
+                },
+                "repeats": {
+                  "title": "how many records in the step were this one, when more than one (not in text, from which the failure signature is made)",
+                  "type": "integer",
+                  "minimum": 2
                 }
               },
               "required": [
@@ -119,12 +124,18 @@
           "truncated": {
             "title": "whether lines were left out to stay within maxLines",
             "type": "boolean"
+          },
+          "rules": {
+            "title": "the version of these rules: a failure signature made from lines of other rules does not match",
+            "type": "integer",
+            "minimum": 1
           }
         },
         "required": [
           "failingStep",
           "lines",
-          "truncated"
+          "truncated",
+          "rules"
         ],
         "additionalProperties": false
       }
