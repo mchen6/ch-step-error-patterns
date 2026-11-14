@@ -112,7 +112,7 @@ test('falls back to the tail when nothing matches', () => {
   const out = extractErrors([{name: '(top)', lines: ['set up']}, {name: 'Run make', lines}, {name: 'Post job cleanup', lines: ['bye']}], 40);
   assert.strictEqual(out.failingStep, null);
   assert.deepStrictEqual(out.lines.map((l) => [l.step, l.index, l.kind]), lines.slice(5).map((_, i) => ['Run make', i + 5, 'tail']));
-  assert.deepStrictEqual(extractErrors([], 40), {failingStep: null, lines: [], truncated: false});
+  assert.deepStrictEqual(extractErrors([], 40), {failingStep: null, lines: [], truncated: false, rules: 2});
 });
 
 test('caps at maxLines and sets truncated, keeping the failing step\'s exit and first errors', () => {
@@ -200,4 +200,220 @@ test('steps as the jobs API lists them are accepted: a null conclusion and the A
   const api = [{name: 'Set up job', status: 'completed', conclusion: 'success', number: 1, started_at: 'x', completed_at: 'y'}, {name: 'Run a', status: 'in_progress', conclusion: null, number: 2}];
   const {output} = await extract({steps: [{name: 'Run a', lines: ['Error: x']}], stepConclusions: api});
   assert.strictEqual(output.failingStep, 'Run a');
+});
+
+// JSON log records (bunyan, pino) and other noise in a dogfood run's error
+// lines (run 43497750749, the reviewer, 2026-11-13): an info record carrying
+// the startup options, the same error record from several processes,
+// an assertion whose message embeds a stderr excerpt with a JSON blob, and
+// Node's own internal frames.
+const record = (o) => JSON.stringify({name: 'countinghouse', hostname: 'runner1', v: 0, time: '2026-11-13T20:03:50.000Z', ...o});
+const nonTail = (out) => out.lines.filter((l) => l.kind !== 'tail');
+
+test('a JSON log record below warn is dropped, from the matches and from the tail', () => {
+  const lines = [record({pid: 1, level: 30, msg: 'module sandbox: m effective permissions {"fs":[],"limits":{"heapMb":256}} error budget'}),
+    record({pid: 1, level: 20, msg: 'debug: an Error happened in a test of errors'})];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(out.lines, []);
+});
+
+test('a JSON log record at error level is its e, else its msg, and is an error whatever it says', () => {
+  const lines = [record({pid: 9612, level: 50, e: "worker exit on error: ENOENT: no such file or directory, realpath 'D:\\a\\lib\\cli-options.js'", msg: '', time: '2026-11-13T20:03:50.857Z'}),
+    record({pid: 9612, level: 50, msg: 'the module stopped', time: '2026-11-13T20:03:51.000Z'}),
+    record({pid: 9612, level: 40, msg: 'a warning about an Error', time: '2026-11-13T20:03:52.000Z'}),
+    record({pid: 9612, level: 40, msg: 'a plain warning', time: '2026-11-13T20:03:53.000Z'})];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.index, l.kind, l.text]), [
+    [0, 'error', "worker exit on error: ENOENT: no such file or directory, realpath 'D:\\a\\lib\\cli-options.js'"],
+    [1, 'error', 'the module stopped'],
+    [2, 'error', 'a warning about an Error']
+  ]);
+  assert.strictEqual(out.lines.find((l) => l.index === 3).text, 'a plain warning', 'a warn record reaches the tail as its text');
+});
+
+test('an e that is an object (an error serializer) is its message', () => {
+  const out = extractErrors([{name: 'Run x', lines: [record({pid: 1, level: 50, err: null, e: {message: 'boom', stack: 'Error: boom\n    at x'}})]}], 40);
+  assert.strictEqual(nonTail(out)[0].text, 'boom');
+});
+
+test('records in one step the same but for pid and time are one line, with repeats beside its text', () => {
+  const e = "worker exit on error: ENOENT: no such file or directory, realpath 'lib/cli-options.js'";
+  const lines = [record({pid: 9612, level: 50, e, msg: '', time: 't1'}), 'other', record({pid: 7600, level: 50, e, msg: '', time: 't2'}),
+    record({pid: 8296, level: 50, e, msg: '', time: 't3'}), record({pid: 8296, level: 50, e: 'a different one', msg: '', time: 't4'})];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.index, l.text, l.repeats]), [[0, e, 3], [4, 'a different one', undefined]]);
+  assert.ok(!out.lines.some((l) => l.index === 2 || l.index === 3), 'the repeats are not in the tail either');
+});
+
+test('a repeat in another step is that step\'s own line', () => {
+  const r = record({pid: 1, level: 50, e: 'the same failure', msg: '', time: 't'});
+  const out = extractErrors([{name: 'Run unit', lines: [r]}, {name: 'Run integration', lines: [r, '##[error]Process completed with exit code 1.']}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.step, l.kind, l.repeats]),
+    [['Run unit', 'error', undefined], ['Run integration', 'error', undefined], ['Run integration', 'exit', undefined]]);
+  assert.strictEqual(out.failingStep, 'Run integration');
+});
+
+test('an object with a level that is not a logger\'s record (no time, or no text field) is an ordinary line', () => {
+  const lines = ['{"level":3,"error":"Expected 2 got 3"}', '{"level":10,"name":"config","time":"t"}'];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(out.lines.map((l) => [l.index, l.text]), [[0, lines[0]], [1, lines[1]]], 'both kept as they are (in the tail)');
+});
+
+test('a record left out ends no traceback and fills no frame window', () => {
+  const info = record({pid: 1, level: 30, msg: 'tick', time: 't'});
+  const py = ['Traceback (most recent call last):', '  File "/a/t.py", line 1, in t', info, '  File "/a/p.py", line 2, in p', '  File "/a/q.py", line 3, in q', 'ValueError: bad'];
+  assert.deepStrictEqual(nonTail(extractErrors([{name: 'Run pytest', lines: py}], 40)).filter((l) => l.kind === 'stack').map((l) => l.index), [0, 3, 4]);
+  const js = ['Error: boom', ...Array.from({length: 12}, () => '    at Module._compile (node:internal/modules/cjs/loader:1929:14)'), '    at a (a.js:1:1)'];
+  assert.deepStrictEqual(nonTail(extractErrors([{name: 'Run x', lines: js}], 40)).map((l) => [l.index, l.kind]), [[0, 'error'], [13, 'stack']]);
+});
+
+test('JSON embedded in a picked line is cut to 200 characters', () => {
+  const blob = JSON.stringify({jobTimeout: 3600000, moduleSandbox: 'audit', more: 'x'.repeat(2000)});
+  const line = `AssertionError [ERR_ASSERTION]: the server exited: stderr ${blob} -- end`;
+  const out = extractErrors([{name: 'Run x', lines: [line]}], 40);
+  const text = nonTail(out)[0].text;
+  const at = line.indexOf('{');
+  assert.strictEqual(text, `${line.slice(0, at + 200)}…`, 'a plain …: no count of what was cut, which would change the signature');
+  const short = 'Error: got {"a":1} instead';
+  assert.strictEqual(extractErrors([{name: 'Run x', lines: [short]}], 40).lines[0].text, short, 'a short one is kept whole');
+});
+
+test('Node\'s internal frames are skipped, and do not use up the two frames an error gets', () => {
+  const lines = ['Error: boom', '    at Module._compile (node:internal/modules/cjs/loader:1929:14)', '    at a (a.js:1:1)',
+    '    at node:internal/main/run_main_module:33:47', '    at b (b.js:1:1)', '    at c (c.js:1:1)'];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.index, l.kind]), [[0, 'error'], [2, 'stack'], [4, 'stack']]);
+});
+
+test('the output names its rules version, so a scenario can tell old extractions from new', async () => {
+  assert.strictEqual(extractErrors([{name: 'Run x', lines: ['Error: x']}], 40).rules, 2);
+  const {output} = await extract({steps: [{name: 'Run x', lines: ['Error: x']}]});
+  assert.strictEqual(output.rules, 2);
+});
+
+// The reviewer's review of #1 (2026-11-13).
+test('a record whose e is a whole stack is its first line', () => {
+  const stack = 'Error: worker exit\n    at a (a.js:1:1)\n' + '    at b (b.js:2:2)\n'.repeat(500);
+  const out = extractErrors([{name: 'Run x', lines: [record({pid: 1, level: 50, e: stack})]}], 40);
+  assert.strictEqual(nonTail(out)[0].text, 'Error: worker exit');
+});
+
+test('every line is at most 500 characters, taken in and given back, cut with …', () => {
+  const long = `Error: ${'x'.repeat(2000)}`;
+  const out = extractErrors([{name: 'Run x', lines: [long, ...Array.from({length: 20}, (_, i) => `t${i} ${'y'.repeat(900)}`)]}], 40);
+  assert.ok(out.lines.length > 1);
+  for (const l of out.lines) assert.ok(l.text.length <= 500, String(l.text.length));
+  assert.strictEqual(out.lines[0].text, `${long.slice(0, 499)}…`);
+});
+
+test('a record cut by the line bound (as ch-step-log-clean cuts it) is still read as a record', () => {
+  const full = record({pid: 9612, level: 50, e: `worker exit on error: ENOENT ${'z'.repeat(700)}`, msg: ''});
+  const cut = `${full.slice(0, 499)}…`;
+  // bunyan's own order: name, hostname, pid, level, msg, time, v
+  const info = JSON.stringify({name: 'countinghouse', hostname: 'runner1', pid: 1, level: 30, msg: `tick ${'q'.repeat(700)}`, time: 't', v: 0});
+  const out = extractErrors([{name: 'Run x', lines: [cut, `${info.slice(0, 499)}…`]}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.kind, l.text.slice(0, 40)]), [['error', 'worker exit on error: ENOENT zzzzzzzzzzz']]);
+  assert.ok(!out.lines.some((l) => l.index === 1), 'a cut info record is dropped too');
+});
+
+test('the schema bounds every line at 500 characters, in the input and the output', () => {
+  const x = require('../schema.json').patternService.extract;
+  assert.strictEqual(x.input.properties.steps.items.properties.lines.items.maxLength, 500);
+  assert.strictEqual(x.output.properties.lines.items.properties.text.maxLength, 500);
+});
+
+test('Node\'s internal frames are not in the tail either, indented or not', () => {
+  const lines = ['line a', '    at Module._compile (node:internal/modules/cjs/loader:1929:14)', 'at node:internal/main/run_main_module:33:47', 'line b'];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(out.lines.map((l) => l.index), [0, 3]);
+});
+
+// The real case from #151's run (the reviewer, 2026-11-13): mocha's summary.
+const MOCHA = [
+  '  27 passing (2m)',
+  '  1 failing',
+  '',
+  '  1) remote 07: usage records for remote calls, and the call id across every hop',
+  '       the call id is carried unchanged …:',
+  '     TypeError: Cannot read properties of null (reading \'usageCall\')',
+  '      at Context.<anonymous> (test/remote/07-usage-records.js:212:31)',
+  '      at process.processTicksAndRejections (node:internal/process/task_queues:105:5)',
+  '',
+  '##[error]Process completed with exit code 1.'
+];
+
+test('mocha\'s numbered failure: the title, its lines and its error, paired, with the failure\'s number', () => {
+  const out = extractErrors([{name: 'Run npm test', lines: MOCHA}], 40);
+  const paired = out.lines.filter((l) => l.failure === 1);
+  assert.deepStrictEqual(paired.map((l) => [l.index, l.kind]), [[3, 'error'], [4, 'error'], [5, 'error']]);
+  assert.strictEqual(paired[2].text, "     TypeError: Cannot read properties of null (reading 'usageCall')");
+  assert.ok(out.lines.some((l) => l.index === 6 && l.kind === 'stack'), 'its first frame is kept');
+  assert.ok(!out.lines.some((l) => l.index === 7), 'Node\'s internal frame is not');
+});
+
+test('a mocha failure survives a noisy log: ranked above the generic matches, below the exit line', () => {
+  const noise = Array.from({length: 60}, (_, i) => `ERROR something unrelated ${i}`);
+  const out = extractErrors([{name: 'Run npm test', lines: [...noise, ...MOCHA]}], 5);
+  const texts = out.lines.map((l) => l.text);
+  assert.ok(texts.includes("     TypeError: Cannot read properties of null (reading 'usageCall')"), JSON.stringify(texts));
+  assert.ok(texts.includes('  1) remote 07: usage records for remote calls, and the call id across every hop'));
+  assert.ok(texts.includes('##[error]Process completed with exit code 1.'));
+  assert.strictEqual(out.truncated, true);
+});
+
+test('a numbered line with no error after it (mocha\'s progress line) is not a failure', () => {
+  const lines = ['  remote 07', '      ✔ one', '      1) the call id is carried unchanged', '      ✔ two', 'done'];
+  const out = extractErrors([{name: 'Run npm test', lines}], 40);
+  assert.ok(!out.lines.some((l) => l.failure != null), JSON.stringify(out.lines));
+});
+
+// /code-review medium of the review fixes.
+test('a record whose text starts with a newline is its first non-empty line', () => {
+  const out = extractErrors([{name: 'Run x', lines: [JSON.stringify({level: 50, time: 1, msg: '\nError: connect ECONNREFUSED'})]}], 40);
+  assert.strictEqual(nonTail(out)[0].text, 'Error: connect ECONNREFUSED');
+});
+
+test('a cut record reads its top-level members only: a nested level or msg is not its own', () => {
+  const long = JSON.stringify({name: 'a', hostname: 'h', pid: 1, req: {level: 10, msg: 'nested'}, level: 50, err: {message: 'boom', stack: 'x'.repeat(900)}});
+  const out = extractErrors([{name: 'Run x', lines: [`${long.slice(0, 499)}…`]}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.kind, l.text]), [['error', 'boom']]);
+});
+
+test('a cut record gives the same text as the whole one: the same key order and level names', () => {
+  const whole = {level: 'ERROR', time: 't', msg: 'request failed', e: 'TypeError: x', pad: 'p'.repeat(900)};
+  const short = {...whole, pad: 'p'};
+  const textOf = (line) => nonTail(extractErrors([{name: 'Run x', lines: [line]}], 40)).map((l) => l.text);
+  assert.deepStrictEqual(textOf(JSON.stringify(short)), ['TypeError: x']);
+  assert.deepStrictEqual(textOf(`${JSON.stringify(whole).slice(0, 499)}…`), ['TypeError: x']);
+});
+
+test('mocha pairing needs deeper indentation and an error name: other numbered lines are not failures', () => {
+  const inline = ['    1) does b', '  other suite', '    Error: retrying', '    ✔ c'];
+  assert.ok(!extractErrors([{name: 'Run x', lines: inline}], 40).lines.some((l) => l.failure != null), 'the next suite ends it');
+  const list = ['  1) Install deps', 'npm error code ERESOLVE'];
+  assert.ok(!extractErrors([{name: 'Run x', lines: list}], 40).lines.some((l) => l.failure != null), 'a numbered list and a later error');
+  const noName = ['  1) suite', '       test', '     something failed: ERROR in config'];
+  assert.ok(!extractErrors([{name: 'Run x', lines: noName}], 40).lines.some((l) => l.failure != null), 'no error name at the start');
+});
+
+test('a cut never splits a surrogate pair', () => {
+  const line = `Error: ${'a'.repeat(491)}\u{1F600}${'b'.repeat(10)}`;
+  const text = extractErrors([{name: 'Run x', lines: [line]}], 40).lines[0].text;
+  assert.strictEqual(text, `Error: ${'a'.repeat(491)}…`);
+});
+
+// The reviewer's re-review of #1 (2026-11-13).
+test('a test runner\'s passing line is not an error, whatever it names', () => {
+  const lines = ['  ✔ retries the call (was: TypeError: x)', '    ✓ handles Error input', 'TypeError: real'];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => l.index), [2]);
+});
+
+test('step names are given back at most 200 characters; the schema bounds them and the lines list', () => {
+  const name = `Run ${'n'.repeat(400)}`;
+  const out = extractErrors([{name, lines: ['Error: x', '##[error]Process completed with exit code 1.']}], 40);
+  assert.strictEqual(out.failingStep, `${name.slice(0, 199)}…`);
+  for (const l of out.lines) assert.strictEqual(l.step.length, 200);
+  const o = require('../schema.json').patternService.extract.output;
+  assert.deepStrictEqual([o.properties.failingStep.maxLength, o.properties.lines.items.properties.step.maxLength, o.properties.lines.maxItems], [200, 200, 200]);
 });

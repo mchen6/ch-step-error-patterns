@@ -14,12 +14,14 @@
               "type": "object",
               "properties": {
                 "name": {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 20000
                 },
                 "lines": {
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 500
                   }
                 }
               },
@@ -77,7 +79,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "maxLength": 200
           },
           "lines": {
             "title": "the lines, in log order",
@@ -86,7 +89,8 @@
               "type": "object",
               "properties": {
                 "step": {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 200
                 },
                 "index": {
                   "title": "the line index within its step",
@@ -94,7 +98,8 @@
                   "minimum": 0
                 },
                 "text": {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 500
                 },
                 "kind": {
                   "type": "string",
@@ -105,6 +110,16 @@
                     "exit",
                     "tail"
                   ]
+                },
+                "repeats": {
+                  "title": "how many records in the step were this one, when more than one (not in text, from which the failure signature is made)",
+                  "type": "integer",
+                  "minimum": 2
+                },
+                "failure": {
+                  "title": "mocha's number for a failure this line is part of: its title, title lines and error, paired",
+                  "type": "integer",
+                  "minimum": 1
                 }
               },
               "required": [
@@ -114,17 +129,24 @@
                 "kind"
               ],
               "additionalProperties": false
-            }
+            },
+            "maxItems": 200
           },
           "truncated": {
             "title": "whether lines were left out to stay within maxLines",
             "type": "boolean"
+          },
+          "rules": {
+            "title": "the version of these rules: a failure signature made from lines of other rules does not match",
+            "type": "integer",
+            "minimum": 1
           }
         },
         "required": [
           "failingStep",
           "lines",
-          "truncated"
+          "truncated",
+          "rules"
         ],
         "additionalProperties": false
       }
