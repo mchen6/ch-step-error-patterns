@@ -19,7 +19,8 @@
                 "lines": {
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 500
                   }
                 }
               },
@@ -94,7 +95,8 @@
                   "minimum": 0
                 },
                 "text": {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 500
                 },
                 "kind": {
                   "type": "string",
@@ -110,6 +112,11 @@
                   "title": "how many records in the step were this one, when more than one (not in text, from which the failure signature is made)",
                   "type": "integer",
                   "minimum": 2
+                },
+                "failure": {
+                  "title": "mocha's number for a failure this line is part of: its title, title lines and error, paired",
+                  "type": "integer",
+                  "minimum": 1
                 }
               },
               "required": [

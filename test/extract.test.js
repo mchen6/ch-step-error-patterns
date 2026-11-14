@@ -273,7 +273,7 @@ test('JSON embedded in a picked line is cut to 200 characters', () => {
   const out = extractErrors([{name: 'Run x', lines: [line]}], 40);
   const text = nonTail(out)[0].text;
   const at = line.indexOf('{');
-  assert.strictEqual(text, `${line.slice(0, at + 200)}… (${line.length - at - 200} more characters)`);
+  assert.strictEqual(text, `${line.slice(0, at + 200)}…`, 'a plain …: no count of what was cut, which would change the signature');
   const short = 'Error: got {"a":1} instead';
   assert.strictEqual(extractErrors([{name: 'Run x', lines: [short]}], 40).lines[0].text, short, 'a short one is kept whole');
 });
@@ -289,4 +289,80 @@ test('the output names its rules version, so a scenario can tell old extractions
   assert.strictEqual(extractErrors([{name: 'Run x', lines: ['Error: x']}], 40).rules, 2);
   const {output} = await extract({steps: [{name: 'Run x', lines: ['Error: x']}]});
   assert.strictEqual(output.rules, 2);
+});
+
+// The reviewer's review of #1 (2026-11-13).
+test('a record whose e is a whole stack is its first line', () => {
+  const stack = 'Error: worker exit\n    at a (a.js:1:1)\n' + '    at b (b.js:2:2)\n'.repeat(500);
+  const out = extractErrors([{name: 'Run x', lines: [record({pid: 1, level: 50, e: stack})]}], 40);
+  assert.strictEqual(nonTail(out)[0].text, 'Error: worker exit');
+});
+
+test('every line is at most 500 characters, taken in and given back, cut with …', () => {
+  const long = `Error: ${'x'.repeat(2000)}`;
+  const out = extractErrors([{name: 'Run x', lines: [long, ...Array.from({length: 20}, (_, i) => `t${i} ${'y'.repeat(900)}`)]}], 40);
+  assert.ok(out.lines.length > 1);
+  for (const l of out.lines) assert.ok(l.text.length <= 500, String(l.text.length));
+  assert.strictEqual(out.lines[0].text, `${long.slice(0, 499)}…`);
+});
+
+test('a record cut by the line bound (as ch-step-log-clean cuts it) is still read as a record', () => {
+  const full = record({pid: 9612, level: 50, e: `worker exit on error: ENOENT ${'z'.repeat(700)}`, msg: ''});
+  const cut = `${full.slice(0, 499)}…`;
+  // bunyan's own order: name, hostname, pid, level, msg, time, v
+  const info = JSON.stringify({name: 'countinghouse', hostname: 'runner1', pid: 1, level: 30, msg: `tick ${'q'.repeat(700)}`, time: 't', v: 0});
+  const out = extractErrors([{name: 'Run x', lines: [cut, `${info.slice(0, 499)}…`]}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.kind, l.text.slice(0, 40)]), [['error', 'worker exit on error: ENOENT zzzzzzzzzzz']]);
+  assert.ok(!out.lines.some((l) => l.index === 1), 'a cut info record is dropped too');
+});
+
+test('the schema bounds every line at 500 characters, in the input and the output', () => {
+  const x = require('../schema.json').patternService.extract;
+  assert.strictEqual(x.input.properties.steps.items.properties.lines.items.maxLength, 500);
+  assert.strictEqual(x.output.properties.lines.items.properties.text.maxLength, 500);
+});
+
+test('Node\'s internal frames are not in the tail either, indented or not', () => {
+  const lines = ['line a', '    at Module._compile (node:internal/modules/cjs/loader:1929:14)', 'at node:internal/main/run_main_module:33:47', 'line b'];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(out.lines.map((l) => l.index), [0, 3]);
+});
+
+// The real case from #151's run (the reviewer, 2026-11-13): mocha's summary.
+const MOCHA = [
+  '  27 passing (2m)',
+  '  1 failing',
+  '',
+  '  1) remote 07: usage records for remote calls, and the call id across every hop',
+  '       the call id is carried unchanged …:',
+  '     TypeError: Cannot read properties of null (reading \'usageCall\')',
+  '      at Context.<anonymous> (test/remote/07-usage-records.js:212:31)',
+  '      at process.processTicksAndRejections (node:internal/process/task_queues:105:5)',
+  '',
+  '##[error]Process completed with exit code 1.'
+];
+
+test('mocha\'s numbered failure: the title, its lines and its error, paired, with the failure\'s number', () => {
+  const out = extractErrors([{name: 'Run npm test', lines: MOCHA}], 40);
+  const paired = out.lines.filter((l) => l.failure === 1);
+  assert.deepStrictEqual(paired.map((l) => [l.index, l.kind]), [[3, 'error'], [4, 'error'], [5, 'error']]);
+  assert.strictEqual(paired[2].text, "     TypeError: Cannot read properties of null (reading 'usageCall')");
+  assert.ok(out.lines.some((l) => l.index === 6 && l.kind === 'stack'), 'its first frame is kept');
+  assert.ok(!out.lines.some((l) => l.index === 7), 'Node\'s internal frame is not');
+});
+
+test('a mocha failure survives a noisy log: ranked above the generic matches, below the exit line', () => {
+  const noise = Array.from({length: 60}, (_, i) => `ERROR something unrelated ${i}`);
+  const out = extractErrors([{name: 'Run npm test', lines: [...noise, ...MOCHA]}], 5);
+  const texts = out.lines.map((l) => l.text);
+  assert.ok(texts.includes("     TypeError: Cannot read properties of null (reading 'usageCall')"), JSON.stringify(texts));
+  assert.ok(texts.includes('  1) remote 07: usage records for remote calls, and the call id across every hop'));
+  assert.ok(texts.includes('##[error]Process completed with exit code 1.'));
+  assert.strictEqual(out.truncated, true);
+});
+
+test('a numbered line with no error after it (mocha\'s progress line) is not a failure', () => {
+  const lines = ['  remote 07', '      ✔ one', '      1) the call id is carried unchanged', '      ✔ two', 'done'];
+  const out = extractErrors([{name: 'Run npm test', lines}], 40);
+  assert.ok(!out.lines.some((l) => l.failure != null), JSON.stringify(out.lines));
 });
