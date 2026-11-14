@@ -366,3 +366,38 @@ test('a numbered line with no error after it (mocha\'s progress line) is not a f
   const out = extractErrors([{name: 'Run npm test', lines}], 40);
   assert.ok(!out.lines.some((l) => l.failure != null), JSON.stringify(out.lines));
 });
+
+// /code-review medium of the review fixes.
+test('a record whose text starts with a newline is its first non-empty line', () => {
+  const out = extractErrors([{name: 'Run x', lines: [JSON.stringify({level: 50, time: 1, msg: '\nError: connect ECONNREFUSED'})]}], 40);
+  assert.strictEqual(nonTail(out)[0].text, 'Error: connect ECONNREFUSED');
+});
+
+test('a cut record reads its top-level members only: a nested level or msg is not its own', () => {
+  const long = JSON.stringify({name: 'a', hostname: 'h', pid: 1, req: {level: 10, msg: 'nested'}, level: 50, err: {message: 'boom', stack: 'x'.repeat(900)}});
+  const out = extractErrors([{name: 'Run x', lines: [`${long.slice(0, 499)}…`]}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.kind, l.text]), [['error', 'boom']]);
+});
+
+test('a cut record gives the same text as the whole one: the same key order and level names', () => {
+  const whole = {level: 'ERROR', time: 't', msg: 'request failed', e: 'TypeError: x', pad: 'p'.repeat(900)};
+  const short = {...whole, pad: 'p'};
+  const textOf = (line) => nonTail(extractErrors([{name: 'Run x', lines: [line]}], 40)).map((l) => l.text);
+  assert.deepStrictEqual(textOf(JSON.stringify(short)), ['TypeError: x']);
+  assert.deepStrictEqual(textOf(`${JSON.stringify(whole).slice(0, 499)}…`), ['TypeError: x']);
+});
+
+test('mocha pairing needs deeper indentation and an error name: other numbered lines are not failures', () => {
+  const inline = ['    1) does b', '  other suite', '    Error: retrying', '    ✔ c'];
+  assert.ok(!extractErrors([{name: 'Run x', lines: inline}], 40).lines.some((l) => l.failure != null), 'the next suite ends it');
+  const list = ['  1) Install deps', 'npm error code ERESOLVE'];
+  assert.ok(!extractErrors([{name: 'Run x', lines: list}], 40).lines.some((l) => l.failure != null), 'a numbered list and a later error');
+  const noName = ['  1) suite', '       test', '     something failed: ERROR in config'];
+  assert.ok(!extractErrors([{name: 'Run x', lines: noName}], 40).lines.some((l) => l.failure != null), 'no error name at the start');
+});
+
+test('a cut never splits a surrogate pair', () => {
+  const line = `Error: ${'a'.repeat(491)}\u{1F600}${'b'.repeat(10)}`;
+  const text = extractErrors([{name: 'Run x', lines: [line]}], 40).lines[0].text;
+  assert.strictEqual(text, `Error: ${'a'.repeat(491)}…`);
+});
