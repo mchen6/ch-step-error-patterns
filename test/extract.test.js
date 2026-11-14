@@ -401,3 +401,19 @@ test('a cut never splits a surrogate pair', () => {
   const text = extractErrors([{name: 'Run x', lines: [line]}], 40).lines[0].text;
   assert.strictEqual(text, `Error: ${'a'.repeat(491)}…`);
 });
+
+// The reviewer's re-review of #1 (2026-11-13).
+test('a test runner\'s passing line is not an error, whatever it names', () => {
+  const lines = ['  ✔ retries the call (was: TypeError: x)', '    ✓ handles Error input', 'TypeError: real'];
+  const out = extractErrors([{name: 'Run x', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => l.index), [2]);
+});
+
+test('step names are given back at most 200 characters; the schema bounds them and the lines list', () => {
+  const name = `Run ${'n'.repeat(400)}`;
+  const out = extractErrors([{name, lines: ['Error: x', '##[error]Process completed with exit code 1.']}], 40);
+  assert.strictEqual(out.failingStep, `${name.slice(0, 199)}…`);
+  for (const l of out.lines) assert.strictEqual(l.step.length, 200);
+  const o = require('../schema.json').patternService.extract.output;
+  assert.deepStrictEqual([o.properties.failingStep.maxLength, o.properties.lines.items.properties.step.maxLength, o.properties.lines.maxItems], [200, 200, 200]);
+});

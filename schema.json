@@ -14,7 +14,8 @@
               "type": "object",
               "properties": {
                 "name": {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 20000
                 },
                 "lines": {
                   "type": "array",
@@ -78,7 +79,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "maxLength": 200
           },
           "lines": {
             "title": "the lines, in log order",
@@ -87,7 +89,8 @@
               "type": "object",
               "properties": {
                 "step": {
-                  "type": "string"
+                  "type": "string",
+                  "maxLength": 200
                 },
                 "index": {
                   "title": "the line index within its step",
@@ -126,7 +129,8 @@
                 "kind"
               ],
               "additionalProperties": false
-            }
+            },
+            "maxItems": 200
           },
           "truncated": {
             "title": "whether lines were left out to stay within maxLines",
