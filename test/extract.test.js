@@ -1,9 +1,12 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-require('./support');
 const {extractErrors} = require('../lib/patterns');
-const extract = require('../handlers/patternService/extract');
+const {CountinghouseError} = require('countinghouse/lib/countinghouse-error');
+// the handler as the runtime calls it: (input, ctx), ctx.error the runtime's
+const ctx = {error: (code, message, details) => CountinghouseError.module(code, message, details)};
+const handler = require('../handlers/patternService/extract');
+const extract = Object.assign((input) => handler(input, ctx), handler);
 const nodeTest = require('./fixtures/steps-node-test.json');
 const python = require('./fixtures/steps-python.json');
 
@@ -126,7 +129,7 @@ test('caps at maxLines and sets truncated, keeping the failing step\'s exit and 
 });
 
 test('handler validates maxLines range', async () => {
-  const invalid = (err) => err.code === 'ARGUMENTS_INVALID';
+  const invalid = (err) => err.code === 'INPUT_REJECTED';
   for (const maxLines of [0, 201, 1.5, '10']) {
     await assert.rejects(extract({steps: [], maxLines}), invalid, String(maxLines));
   }
@@ -176,7 +179,7 @@ test('console.error blocks do not displace a Jest failure under maxLines', () =>
 });
 
 test('handler validates stepConclusions', async () => {
-  const invalid = (err) => err.code === 'ARGUMENTS_INVALID';
+  const invalid = (err) => err.code === 'INPUT_REJECTED';
   for (const bad of [{steps: [], stepConclusions: 'x'}, {steps: [], stepConclusions: [{name: 'a'}]}, {steps: [], stepConclusions: [{name: 1, conclusion: 'failure'}]}]) {
     await assert.rejects(extract(bad), invalid, JSON.stringify(bad));
   }

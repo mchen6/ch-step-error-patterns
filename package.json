@@ -1,6 +1,6 @@
 {
   "name": "@countinghouse/ch-step-error-patterns",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "countinghouse step module: the few lines that matter from a failed CI job: the exit line, errors, assertions, the first stack frames, or the failing step's tail.",
   "license": "Apache-2.0",
   "repository": {
@@ -27,7 +27,7 @@
     "role": "part"
   },
   "devDependencies": {
-    "countinghouse": "git+https://github.com/mchen6/countinghouse.git#9e1cdb591f470ea502f060ed70ce244bdab633fe"
+    "countinghouse": "git+https://github.com/mchen6/countinghouse.git#c26b9fcbe484a0fb4f902ab6d45ec2062f20bf33"
   },
   "allowScripts": {
     "dtrace-provider": false,
