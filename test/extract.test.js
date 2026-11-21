@@ -489,7 +489,7 @@ test('cargo test: each panic and its message are kept', () => {
   assert.strictEqual(byIndex.has(16), false, 'the note is not the panic\'s');
 });
 
-// B's A4: only the failing step's matches decide whether its tail is added:
+// (the final pass on the packs, A4) Only the failing step's matches decide whether its tail is added:
 // warnings in an earlier step do not keep it out.
 test('the tail is added when the failing step has fewer than five matches, whatever other steps hold', () => {
   const steps = [{name: 'Run npm ci', lines: ['ERROR: one', 'ERROR: two', 'ERROR: three', 'ERROR: four', 'ERROR: five']},
