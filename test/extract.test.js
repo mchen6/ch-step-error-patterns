@@ -499,6 +499,35 @@ test('the tail is added when the failing step has fewer than five matches, whate
   assert.deepStrictEqual(out.lines.filter((l) => l.step === 'Run npm test').map((l) => l.kind), ['tail', 'tail', 'error', 'tail', 'exit']);
 });
 
-test('these rules are version 3', () => {
-  assert.strictEqual(extractErrors([{name: 'Run x', lines: ['Error: x']}], 40).rules, 3);
+// The medium on A5/A8.
+test('a verdict that reads as an assertion keeps its detail too: ESLint\'s Expected rows, a go test named for an assertion', () => {
+  const out = extractErrors([{name: 'Run t', lines: ['/repo/src/a.js', '  3:1  error  Expected indentation of 2 spaces but found 4  indent',
+    '--- FAIL: TestAssertionHelper (0.00s)', '    x_test.go:9: got 1 want 2', '##[error]Process completed with exit code 1.']}], 40);
+  const byIndex = new Map(out.lines.map((l) => [l.index, l.kind]));
+  assert.strictEqual(byIndex.get(0), 'stack');
+  assert.strictEqual(byIndex.get(3), 'assert');
+});
+
+test('more passing lines and zero counts: tsc\'s Found 0 errors, npm 9\'s WARN, a trailing ... ok', () => {
+  const lines = ['Found 0 errors. Watching for file changes.', "npm WARN deprecated domexception@4.0.0: Use your platform's native DOMException instead",
+    'test tests::returns_ParseError ... ok', 'test_raises_TypeError (tests.T) ... ok', 'Found 2 errors.', 'npm ERR! code ELIFECYCLE', 'Results: 2 FAILED, 5 PASSED'];
+  const out = extractErrors([{name: 'Run t', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => l.index), [4, 5, 6]);
+});
+
+test('go test -v with parallel tests: a detail is the test\'s whose output it is (=== NAME, === CONT), never another\'s', () => {
+  const lines = ['=== RUN   TestA', '=== PAUSE TestA', '=== RUN   TestB', '=== PAUSE TestB', '=== CONT  TestA', '=== CONT  TestB', '=== NAME  TestA',
+    '    a_test.go:3: a log line from A', '=== NAME  TestB', '    b_test.go:4: got 1 want 2', '--- PASS: TestA (0.00s)', '--- FAIL: TestB (0.00s)', 'FAIL', '##[error]Process completed with exit code 1.'];
+  const out = extractErrors([{name: 'Run go test -v ./...', lines}], 40);
+  const byIndex = new Map(out.lines.map((l) => [l.index, l.kind]));
+  assert.strictEqual(byIndex.get(9), 'assert');
+  assert.notStrictEqual(byIndex.get(7), 'assert', 'A passed: its line is not B\'s detail');
+});
+
+test('a panic\'s message stops at its backtrace', () => {
+  const lines = ["thread 'main' panicked at src/main.rs:2:5:", 'boom', 'stack backtrace:', '   0: rust_begin_unwind', '   1: core::panicking::panic_fmt', '##[error]Process completed with exit code 101.'];
+  const out = extractErrors([{name: 'Run cargo run', lines}], 40);
+  const byIndex = new Map(out.lines.map((l) => [l.index, l.kind]));
+  assert.strictEqual(byIndex.get(1), 'assert');
+  for (const i of [2, 3, 4]) assert.notStrictEqual(byIndex.get(i), 'assert', lines[i]);
 });
