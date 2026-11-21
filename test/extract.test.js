@@ -492,7 +492,7 @@ test('cargo test: each panic and its message are kept', () => {
 // B's A4: only the failing step's matches decide whether its tail is added:
 // warnings in an earlier step do not keep it out.
 test('the tail is added when the failing step has fewer than five matches, whatever other steps hold', () => {
-  const steps = [{name: 'Run npm ci', lines: ['npm ERR! one', 'ERROR: two', 'ERROR: three', 'ERROR: four', 'ERROR: five']},
+  const steps = [{name: 'Run npm ci', lines: ['ERROR: one', 'ERROR: two', 'ERROR: three', 'ERROR: four', 'ERROR: five']},
     {name: 'Run npm test', lines: ['> jest', 'some output', 'FAIL src/a.test.js', 'more output', '##[error]Process completed with exit code 1.']}];
   const out = extractErrors(steps, 40);
   assert.strictEqual(out.failingStep, 'Run npm test');
@@ -510,9 +510,11 @@ test('a verdict that reads as an assertion keeps its detail too: ESLint\'s Expec
 
 test('more passing lines and zero counts: tsc\'s Found 0 errors, npm 9\'s WARN, a trailing ... ok', () => {
   const lines = ['Found 0 errors. Watching for file changes.', "npm WARN deprecated domexception@4.0.0: Use your platform's native DOMException instead",
-    'test tests::returns_ParseError ... ok', 'test_raises_TypeError (tests.T) ... ok', 'Found 2 errors.', 'npm ERR! code ELIFECYCLE', 'Results: 2 FAILED, 5 PASSED'];
+    'test tests::returns_ParseError ... ok', 'test_raises_TypeError (tests.T) ... ok', 'Found 2 errors.', 'Results: 2 FAILED, 5 PASSED',
+    'tests/test_p.py::test_parse[raises ValueError] PASSED                [ 50%]', '[gw1] [ 25%] PASSED tests/test_x.py::test_raises_ValueError',
+    'ERROR: retrying migration 0042 ... ok'];
   const out = extractErrors([{name: 'Run t', lines}], 40);
-  assert.deepStrictEqual(nonTail(out).map((l) => l.index), [4, 5, 6]);
+  assert.deepStrictEqual(nonTail(out).map((l) => l.index), [4, 5, 8]);
 });
 
 test('go test -v with parallel tests: a detail is the test\'s whose output it is (=== NAME, === CONT), never another\'s', () => {
@@ -530,4 +532,18 @@ test('a panic\'s message stops at its backtrace', () => {
   const byIndex = new Map(out.lines.map((l) => [l.index, l.kind]));
   assert.strictEqual(byIndex.get(1), 'assert');
   for (const i of [2, 3, 4]) assert.notStrictEqual(byIndex.get(i), 'assert', lines[i]);
+});
+
+// The medium's round 2.
+test('go test -v: a parent\'s line after its subtest ends is the parent\'s detail', () => {
+  const lines = ['=== RUN   TestB', '=== RUN   TestB/sub', '    --- PASS: TestB/sub (0.00s)', '    b_test.go:20: got 1 want 2', '--- FAIL: TestB (0.00s)', '##[error]Process completed with exit code 1.'];
+  const out = extractErrors([{name: 'Run go test -v ./...', lines}], 40);
+  assert.strictEqual(new Map(out.lines.map((l) => [l.index, l.kind])).get(3), 'assert');
+});
+
+test('npm 6-9\'s closing ERR! block does not keep the tail, which holds the cause, out', () => {
+  const lines = ["Module not found: Can't resolve './x'", 'npm ERR! code ELIFECYCLE', 'npm ERR! errno 1', 'npm ERR! app@1.0.0 build: `webpack`', 'npm ERR! Exit status 1',
+    'npm ERR! A complete log of this run can be found in:', 'npm ERR!     /home/runner/.npm/_logs/x-debug.log', '##[error]Process completed with exit code 1.'];
+  const out = extractErrors([{name: 'Run npm run build', lines}], 40);
+  assert.ok(out.lines.some((l) => l.index === 0), 'the cause is kept');
 });
