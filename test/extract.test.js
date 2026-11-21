@@ -115,7 +115,7 @@ test('falls back to the tail when nothing matches', () => {
   const out = extractErrors([{name: '(top)', lines: ['set up']}, {name: 'Run make', lines}, {name: 'Post job cleanup', lines: ['bye']}], 40);
   assert.strictEqual(out.failingStep, null);
   assert.deepStrictEqual(out.lines.map((l) => [l.step, l.index, l.kind]), lines.slice(5).map((_, i) => ['Run make', i + 5, 'tail']));
-  assert.deepStrictEqual(extractErrors([], 40), {failingStep: null, lines: [], truncated: false, rules: 2});
+  assert.deepStrictEqual(extractErrors([], 40), {failingStep: null, lines: [], truncated: false, rules: 3});
 });
 
 test('caps at maxLines and sets truncated, keeping the failing step\'s exit and first errors', () => {
@@ -289,9 +289,9 @@ test('Node\'s internal frames are skipped, and do not use up the two frames an e
 });
 
 test('the output names its rules version, so a scenario can tell old extractions from new', async () => {
-  assert.strictEqual(extractErrors([{name: 'Run x', lines: ['Error: x']}], 40).rules, 2);
+  assert.strictEqual(extractErrors([{name: 'Run x', lines: ['Error: x']}], 40).rules, 3);
   const {output} = await extract({steps: [{name: 'Run x', lines: ['Error: x']}]});
-  assert.strictEqual(output.rules, 2);
+  assert.strictEqual(output.rules, 3);
 });
 
 // The reviewer's review of #1 (2026-11-13).
@@ -419,4 +419,86 @@ test('step names are given back at most 200 characters; the schema bounds them a
   for (const l of out.lines) assert.strictEqual(l.step.length, 200);
   const o = require('../schema.json').patternService.extract.output;
   assert.deepStrictEqual([o.properties.failingStep.maxLength, o.properties.lines.items.properties.step.maxLength, o.properties.lines.maxItems], [200, 200, 200]);
+});
+
+// The final pass on the packs (A5): a passing test's line names its test,
+// whatever the test's name says; a file name or a coverage row is not an
+// error either.
+test('a passing line of go test, jest, pytest and TAP is not an error, whatever its test is named', () => {
+  const lines = ['=== RUN   TestParseError', '--- PASS: TestParseError (0.00s)', 'PASS src/errors/HttpError.test.ts',
+    'tests/test_errors.py::test_raises_ValueError PASSED                      [ 25%]', 'ok   github.com/acme/errors 0.003s',
+    'ok 3 - throws a TypeError', '--- FAIL: TestWrapError (0.00s)', 'FAIL src/api/user.test.ts'];
+  const out = extractErrors([{name: 'Run t', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => l.index), [6, 7]);
+});
+
+test('an error\'s name followed by a file extension or a table bar (a file, a coverage row) is not an error', () => {
+  const lines = [' HttpError.ts         |   100   |   100    |   100   |   100   |', ' ValidationError.ts   |   100   |   100    |   100   |   100   |',
+    'Compiling src/errors/HttpError.ts', 'TypeError: real', 'threw a RangeError.', 'src/errors/HttpError.test.ts:3 ReferenceError: x is not defined'];
+  const out = extractErrors([{name: 'Run t', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => l.index), [3, 4, 5]);
+});
+
+test('npm\'s warnings and a build\'s count of zero errors are not errors', () => {
+  const lines = ["npm warn deprecated domexception@4.0.0: Use your platform's native DOMException instead", '    0 Error(s)', '0 errors', 'Error: real'];
+  const out = extractErrors([{name: 'Run t', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => l.index), [3]);
+});
+
+// A8: the line that says what failed is kept beside its verdict, however
+// many verdicts the step has.
+test('go test: a failed test\'s indented lines are kept, after its --- FAIL: line and between its === RUN and --- FAIL:', () => {
+  const lines = ['=== RUN   TestSum0', '    sum_test.go:12: Sum(1, 2) = 4; want 3', '--- FAIL: TestSum0 (0.00s)',
+    '=== RUN   TestSum1', '--- FAIL: TestSum1 (0.00s)', '    sum_test.go:20: Sum(2, 2) = 5; want 4', '    sum_test.go:21: and more',
+    '=== RUN   TestSum2', '    sum_test.go:30: Sum(3, 3) = 7; want 6', '--- FAIL: TestSum2 (0.00s)', 'FAIL', 'FAIL\tgithub.com/acme/proj/pkg/sum\t0.004s', 'FAIL', '##[error]Process completed with exit code 1.'];
+  const out = extractErrors([{name: 'Run go test ./...', lines}], 40);
+  const kept = new Set(out.lines.map((l) => l.index));
+  for (const i of [1, 5, 6, 8]) assert.ok(kept.has(i), `line ${i}: ${lines[i]}`);
+  assert.ok(!out.lines.some((l) => l.kind === 'tail'), 'enough matches: no tail');
+  assert.strictEqual(out.lines.find((l) => l.index === 1).kind, 'assert');
+});
+
+test('ESLint stylish: the file line above each file\'s rows is kept', () => {
+  const lines = ['> eslint .', '/home/runner/work/app/app/src/api/user.js', "  12:7   error  'token' is assigned a value but never used  no-unused-vars",
+    '  30:1   error  Unexpected console statement                 no-console', '/home/runner/work/app/app/src/util/date.js',
+    "   3:10  error  'parse' is defined but never used            no-unused-vars", '✖ 3 problems (3 errors, 0 warnings)', '##[error]Process completed with exit code 1.'];
+  const out = extractErrors([{name: 'Run npm run lint', lines}], 40);
+  const byIndex = new Map(out.lines.map((l) => [l.index, l.kind]));
+  assert.strictEqual(byIndex.get(1), 'stack');
+  assert.strictEqual(byIndex.get(4), 'stack');
+  assert.strictEqual(byIndex.has(0), false);
+});
+
+test('rustc: the --> line after each error is kept', () => {
+  const lines = ['error[E0308]: mismatched types', ' --> src/main.rs:4:18', '  |', 'error[E0425]: cannot find value `y` in this scope', ' --> src/lib.rs:9:5',
+    'error[E0599]: no method named `foo` found', ' --> src/bar.rs:21:9', 'error: could not compile `proj` (bin "proj") due to 3 previous errors', '##[error]Process completed with exit code 101.'];
+  const out = extractErrors([{name: 'Run cargo build', lines}], 40);
+  const byIndex = new Map(out.lines.map((l) => [l.index, l.kind]));
+  for (const i of [1, 4, 6]) assert.strictEqual(byIndex.get(i), 'stack', lines[i]);
+});
+
+test('cargo test: each panic and its message are kept', () => {
+  const lines = ['test tests::it_adds ... FAILED', 'test tests::it_subs ... FAILED', '', 'failures:', '', '---- tests::it_adds stdout ----',
+    "thread 'tests::it_adds' panicked at src/lib.rs:14:9:", 'assertion `left == right` failed', '  left: 4', ' right: 5', '',
+    '---- tests::it_subs stdout ----', "thread 'tests::it_subs' panicked at src/lib.rs:20:9:", 'assertion `left == right` failed', '  left: 1', ' right: 0',
+    'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace', '', 'test result: FAILED. 1 passed; 2 failed; 0 ignored', 'error: test failed, to rerun pass `--lib`', '##[error]Process completed with exit code 101.'];
+  const out = extractErrors([{name: 'Run cargo test', lines}], 40);
+  const byIndex = new Map(out.lines.map((l) => [l.index, l.kind]));
+  for (const i of [6, 12]) assert.strictEqual(byIndex.get(i), 'error', lines[i]);
+  for (const i of [7, 8, 9, 13, 14, 15]) assert.strictEqual(byIndex.get(i), 'assert', lines[i]);
+  assert.strictEqual(byIndex.has(16), false, 'the note is not the panic\'s');
+});
+
+// B's A4: only the failing step's matches decide whether its tail is added:
+// warnings in an earlier step do not keep it out.
+test('the tail is added when the failing step has fewer than five matches, whatever other steps hold', () => {
+  const steps = [{name: 'Run npm ci', lines: ['npm ERR! one', 'ERROR: two', 'ERROR: three', 'ERROR: four', 'ERROR: five']},
+    {name: 'Run npm test', lines: ['> jest', 'some output', 'FAIL src/a.test.js', 'more output', '##[error]Process completed with exit code 1.']}];
+  const out = extractErrors(steps, 40);
+  assert.strictEqual(out.failingStep, 'Run npm test');
+  assert.deepStrictEqual(out.lines.filter((l) => l.step === 'Run npm test').map((l) => l.kind), ['tail', 'tail', 'error', 'tail', 'exit']);
+});
+
+test('these rules are version 3', () => {
+  assert.strictEqual(extractErrors([{name: 'Run x', lines: ['Error: x']}], 40).rules, 3);
 });
