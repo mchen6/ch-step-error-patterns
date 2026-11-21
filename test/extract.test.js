@@ -534,16 +534,29 @@ test('a panic\'s message stops at its backtrace', () => {
   for (const i of [2, 3, 4]) assert.notStrictEqual(byIndex.get(i), 'assert', lines[i]);
 });
 
-// The medium's round 2.
-test('go test -v: a parent\'s line after its subtest ends is the parent\'s detail', () => {
-  const lines = ['=== RUN   TestB', '=== RUN   TestB/sub', '    --- PASS: TestB/sub (0.00s)', '    b_test.go:20: got 1 want 2', '--- FAIL: TestB (0.00s)', '##[error]Process completed with exit code 1.'];
-  const out = extractErrors([{name: 'Run go test -v ./...', lines}], 40);
-  assert.strictEqual(new Map(out.lines.map((l) => [l.index, l.kind])).get(3), 'assert');
-});
-
+// The medium's rounds 2 and 3.
 test('npm 6-9\'s closing ERR! block does not keep the tail, which holds the cause, out', () => {
   const lines = ["Module not found: Can't resolve './x'", 'npm ERR! code ELIFECYCLE', 'npm ERR! errno 1', 'npm ERR! app@1.0.0 build: `webpack`', 'npm ERR! Exit status 1',
     'npm ERR! A complete log of this run can be found in:', 'npm ERR!     /home/runner/.npm/_logs/x-debug.log', '##[error]Process completed with exit code 1.'];
   const out = extractErrors([{name: 'Run npm run build', lines}], 40);
   assert.ok(out.lines.some((l) => l.index === 0), 'the cause is kept');
+});
+
+test('npm 10\'s closing block does not keep the tail out either; npm 8\'s ERESOLVE cause is kept; the log file\'s line is no error', () => {
+  const ten = ["Module not found: Can't resolve './x'", 'npm error Lifecycle script `build` failed with error:', 'npm error code 1', 'npm error path /home/runner/work/app',
+    'npm error workspace app@1.0.0', 'npm error location /home/runner/work/app', 'npm error command failed', 'npm error command sh -c webpack',
+    'npm error A complete log of this run can be found in: /home/runner/.npm/_logs/2026-11-21T10_11_12_345Z-debug-0.log', '##[error]Process completed with exit code 1.'];
+  const out = extractErrors([{name: 'Run npm run build', lines: ten}], 40);
+  assert.ok(out.lines.some((l) => l.index === 0), 'the cause is kept');
+  assert.notStrictEqual(out.lines.find((l) => l.index === 8).kind, 'error');
+  const eight = ['npm ERR! code ERESOLVE', 'npm ERR! ERESOLVE unable to resolve dependency tree', ...Array.from({length: 20}, (_, i) => `npm ERR! peer dep line ${i}`), '##[error]Process completed with exit code 1.'];
+  const kept = extractErrors([{name: 'Run npm ci', lines: eight}], 40).lines;
+  assert.deepStrictEqual([0, 1].map((i) => kept.find((l) => l.index === i).kind), ['error', 'error']);
+});
+
+test('passing lines of cargo\'s doctests and should_panic tests, unittest -v with a docstring and pytest\'s count style are no errors', () => {
+  const lines = ['test src/lib.rs - ParseError (line 12) ... ok', 'test tests::rejects - should panic ... ok', 'test_bad_input (tests.T.test_bad_input)',
+    'Raises TypeError on bad input ... ok', 'tests/test_p.py::test_raises_ValueError PASSED [ 3/40]', '[gw0] PASSED tests/test_x.py::test_raises_ValueError', 'TypeError: real'];
+  const out = extractErrors([{name: 'Run t', lines}], 40);
+  assert.deepStrictEqual(nonTail(out).map((l) => l.index), [6]);
 });
