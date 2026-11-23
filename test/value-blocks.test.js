@@ -56,7 +56,7 @@ test('a log with no failed assertion has no details', () => {
 });
 
 test('the block ends at the next test: a passing line, another failure, a frame', () => {
-  const out = run(['AssertionError: one', "+ 'x-value'", '\u2714 passes', "+ 'not-this'", 'AssertionError: two', "- 'y-value'", '  2) next', "- 'nor-this'"]);
+  const out = run(['AssertionError: one', "+ 'x-value'", '\u2714 passes', "+ 'not-this'", '     AssertionError: two', "- 'y-value'", '  2) next', "- 'nor-this'"]);
   const v = valuesOf(out).join('\n');
   assert.ok(v.includes('x-value') && v.includes('y-value'));
   assert.ok(!v.includes('not-this') && !v.includes('nor-this'), v);
@@ -284,4 +284,67 @@ test('the per-call character bound counts the verdicts too', () => {
   const total = d.blocks.reduce((n, b) => n + b.verdict.length + b.values.join('').length, 0);
   assert.ok(total <= BOUNDS.ALL_CHARS, `${total}`);
   assert.ok(d.omittedBlocks > 0);
+});
+
+// The second medium.
+test('a bracket that is a value or a timestamp is no runner tag', () => {
+  const arrays = valuesOf(run(['AssertionError: arrays differ', '[1, 2, 3]', '[1, 2, 4]']));
+  assert.deepStrictEqual(arrays, ['[1, 2, 3]', '[1, 2, 4]']);
+  const stamped = valuesOf(run(['[10:00:01] AssertionError: expected 1 to equal 2', '[10:00:02] + expected-value', '[10:00:03] - actual-value'])).join(' ');
+  assert.ok(stamped.includes('expected-value') && stamped.includes('actual-value'), stamped);
+});
+
+test('a value joined by separators is judged as one', () => {
+  for (const v of ['4111-1111-1111-1111', '4111 1111 1111 1111', 'AB12-CD34-EF56-GH78', 'xkqz-pwmv-trbn-hjfd', 'aB3xY:9kLmP:Q2wEr', 'x9QaB=7kLmN', '3f:a9:1c:7e:88:0b:d2:44:19:ce:6a:50:bb:12:9f:73']) {
+    const out = screenLine(`+ ${v}`);
+    assert.ok(out.includes(WITHHELD) && !out.includes(v), `${v} -> ${out}`);
+  }
+});
+
+test('a piece is withheld where it is, not where its letters first appear', () => {
+  const out = screenBlock(["prefix_x9Q = 'x9Q'", "'7kL'", "'m2P'", "'Zr8'"]);
+  assert.ok(!out[0].includes("'x9Q'"), out[0]);
+});
+
+test('pieces of any case are joined, and a run of numbered names is not a split value', () => {
+  for (const pieces of [["'xkq' +", "'zpw' +", "'mvt' +", "'hjd'"], ['xkq', 'zpw', 'mvt', 'hjd']]) {
+    assert.ok(!screenBlock(pieces).join(' ').includes('zpw'), pieces.join(' '));
+  }
+  const digits = screenBlock(["  '12' + '34' + '56' + '78' + '12' + '34' + '56' + '78'"]).join('');
+  assert.ok(!digits.includes("'56'"), digits);
+  for (const list of [['+ user1', '+ user2', '- user3'], Array.from({length: 12}, (_, i) => `+ line${i}`), ['+ red', '+ green', '- blue']]) {
+    assert.deepStrictEqual(screenBlock(list), list);
+  }
+});
+
+test('a line of spaces costs no backtracking', () => {
+  const line = `${' '.repeat(499)}x`;
+  const t0 = process.hrtime.bigint();
+  for (let i = 0; i < 20; i++) screenBlock([line, line]);
+  assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 1000, 'bounded');
+});
+
+test('a block keeps text of its own failure that looks like a boundary', () => {
+  const testify = ['=== RUN   TestX', '    a_test.go:9:', '        \tError Trace:\t/w/a_test.go:9', '        \tError:      \tNot equal:', '        \t            \texpected: "aaa"', '        \t            \tactual  : "bbb"',
+    '        \t            \tDiff:', '        \t            \t--- Expected', '        \t            \t+++ Actual', '        \t            \t-aaa', '        \t            \t+bbb', '        \tTest:       \tTestX', '--- FAIL: TestX (0.00s)'];
+  const v = shown(run(testify));
+  assert.ok(v.includes('--- Expected') && v.includes('-aaa') && v.includes('+bbb'), v);
+  // (these two lines classify as errors, so they reach the answer through `lines`)
+  const text = shown(run(['AssertionError: wrong message', '+ "AssertionError: boom"', '- "TypeError: boom"']));
+  assert.ok(text.includes('boom') && text.includes('TypeError'), text);
+  const list = valuesOf(run(['AssertionError: list differs', '1) first', '2) second'])).join(' ');
+  assert.ok(list.includes('first') && list.includes('second'), list);
+});
+
+test('ordinary numbers, names and Windows paths stay readable', () => {
+  for (const line of ['expected 1.0000000000000002 to equal 1', '+ 0.30000000000000004', 's3Upload.test.js:12', 'src/oauth2Client.test.js:42:13', '+ http2Server', '+ 0x7fff',
+    'D:\\a\\repo\\x64\\Release\\foo.test.js:12', 'C:\\build\\123\\foo.test.js:9']) {
+    assert.strictEqual(screenLine(line), line);
+  }
+});
+
+test('a verdict cut at the bound says so, with its placeholder whole', () => {
+  const b = run([`AssertionError: ${'word '.repeat(98)}aB3dE9xK2m`, '+ one']).details.blocks[0];
+  assert.strictEqual(b.cut, true);
+  assert.ok(!/<[a-z]*\u2026$/.test(b.verdict), b.verdict.slice(-20));
 });
