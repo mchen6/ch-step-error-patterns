@@ -115,7 +115,7 @@ test('falls back to the tail when nothing matches', () => {
   const out = extractErrors([{name: '(top)', lines: ['set up']}, {name: 'Run make', lines}, {name: 'Post job cleanup', lines: ['bye']}], 40);
   assert.strictEqual(out.failingStep, null);
   assert.deepStrictEqual(out.lines.map((l) => [l.step, l.index, l.kind]), lines.slice(5).map((_, i) => ['Run make', i + 5, 'tail']));
-  assert.deepStrictEqual(extractErrors([], 40), {failingStep: null, lines: [], truncated: false, rules: 3});
+  assert.deepStrictEqual(extractErrors([], 40), {failingStep: null, lines: [], truncated: false, rules: 4});
 });
 
 test('caps at maxLines and sets truncated, keeping the failing step\'s exit and first errors', () => {
@@ -289,9 +289,9 @@ test('Node\'s internal frames are skipped, and do not use up the two frames an e
 });
 
 test('the output names its rules version, so a scenario can tell old extractions from new', async () => {
-  assert.strictEqual(extractErrors([{name: 'Run x', lines: ['Error: x']}], 40).rules, 3);
+  assert.strictEqual(extractErrors([{name: 'Run x', lines: ['Error: x']}], 40).rules, 4);
   const {output} = await extract({steps: [{name: 'Run x', lines: ['Error: x']}]});
-  assert.strictEqual(output.rules, 3);
+  assert.strictEqual(output.rules, 4);
 });
 
 // The reviewer's review of #1 (2026-11-13).
