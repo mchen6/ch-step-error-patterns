@@ -39,6 +39,12 @@ test('a tag on anything else changes nothing', () => {
   assert.deepStrictEqual(kinds('[a.test.js] nothing to see'), []);
 });
 
+test('a severity word is no runner\'s tag: the line stays an error', () => {
+  for (const line of ['[ERROR] ok response was missing', '[ERROR] PASS phrase rejected', 'ERROR | ok field missing', 'app:error: ok status lost', '[FAIL] \u2713 checksum']) {
+    assert.deepStrictEqual(kinds(line), ['error'], line);
+  }
+});
+
 test('a Rust panic with a thread id is a panic: its message is kept beside it', () => {
   for (const head of ["thread 'r_eq' (815558) panicked at src/lib.rs:1:20:", "thread 'r_eq' panicked at src/lib.rs:1:20:"]) {
     const lines = ['---- r_eq stdout ----', '', head, 'assertion `left == right` failed', '  left: "one"', ' right: "two"', 'note: run with `RUST_BACKTRACE=1`', '', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', EXIT];

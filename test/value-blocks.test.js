@@ -209,3 +209,79 @@ test('what reaches `details` has been screened, the verdict too', () => {
   const b = out.details.blocks[0];
   absent([b.verdict, ...b.values], secret, 'details');
 });
+
+// Wherever a value sits, it is judged the same.
+const V = 'xkqjeuzvboatyhwmda';
+test('a value is judged wherever it sits: after a key or scheme, in a URL, an open quote, as a map key, in brackets', () => {
+  for (const line of [`password=${V} rejected`, `Authorization: Bearer ${V}`, ['postgres://admin', `${V}@db.invalid/x`].join(':'), `token: "${V}`, `token ${V}7 rejected`,
+    `"${V}": 1`, `"${V} "`, `+ <${V}>`, `+ ${V}`, `some words ${V} more words`]) {
+    const out = screenLine(line);
+    assert.ok(!out.includes(V) && out.includes(WITHHELD), `${line} -> ${out}`);
+  }
+});
+
+test('separators do not cut a generated value into parts that pass', () => {
+  for (const v of ['aB3-x9Q-7kL-pQ2-zR8-m4T', 'aB3_x9Q_7kL_pQ2_zR8', 'aB3d/x9Qz/7kLm/pQ2w', '550e8400-e29b-41d4-a716-446655440000']) {
+    for (const line of [`+ ${v}`, `token: "${v}"`, `token ${v} rejected`]) {
+      const out = screenLine(line);
+      for (const part of v.split(/[-_/]/)) assert.ok(!out.includes(part), `${line} -> ${out}`);
+    }
+  }
+});
+
+test('an escaped value is withheld: the escape text is the value', () => {
+  const x = (t) => [...t].map((c) => `\\x${c.charCodeAt(0).toString(16)}`).join('');
+  const u = (t) => [...t].map((c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`).join('');
+  for (const line of [`+ "${x('AKIA9Q')}"`, `"k":"${u('aB3d')}"`]) {
+    assert.ok(screenLine(line).includes(WITHHELD), screenLine(line));
+    assert.ok(!screenLine(line).includes('\\x') && !screenLine(line).includes('\\u'), screenLine(line));
+  }
+});
+
+test('pieces are joined across digits, punctuation lines and concatenated literals', () => {
+  const pieces = ['4111', '1111', '1111', '1111'];
+  assert.ok(!screenBlock(pieces.map((p, i) => `${i % 2 ? '-' : '+'} ${p}`)).join('').includes('4111'));
+  assert.ok(!screenBlock(['+ aB3d', '  }', '- E9xK']).join('').includes('aB3d'));
+  const out = screenBlock(["  'aB3d' + 'x9Qz' + '7kLm'"]).join('');
+  assert.ok(!out.includes('aB3d') && !out.includes('7kLm'), out);
+  assert.deepStrictEqual(screenBlock(['+ 200', '- 404']), ['+ 200', '- 404'], 'two status codes');
+  assert.deepStrictEqual(screenBlock(['+ foo', '- bar']), ['+ foo', '- bar'], 'two short words');
+});
+
+test('readable text stays readable in every position', () => {
+  for (const line of ['+ <anonymous>', '  at Object.<anonymous> (src/a.test.js:13:13)', "+   why: 'client settings unreadable'", 'expected: "the default value"', '2026-11-22T17:58:09Z started', 'version 24.15.0 of node', "- 'x86_64-apple-darwin'"]) {
+    assert.strictEqual(screenLine(line), line);
+  }
+});
+
+test('the look at other tags is bounded: a far-off line of the same tag is not this failure\'s', () => {
+  const lines = ['[a] AssertionError: one', "[a] + 'near-value'", ...Array.from({length: 5000}, (_, i) => `[t${i}] noise`), "[a] + 'from-a-much-later'"];
+  const b = run(lines).details.blocks[0];
+  assert.ok(!b.values.join('').includes('later'), b.values.join(' / '));
+  assert.strictEqual(b.cut, true);
+});
+
+test('a block stops at the next test\'s header, in each runner\'s form', () => {
+  const py = run(['E       ValueError: first', 'tests/a.py:3: ValueError', '_____ test_b _____', 'def test_b():', '>   g()']);
+  assert.ok(!valuesOf(py).join('').includes('test_b'), valuesOf(py).join(' / '));
+  const jest = run(['    expect(received).toBe(expected)', '    Expected: 1', 'PASS src/ok.test.js', 'console output of the next file']);
+  assert.ok(!valuesOf(jest).join('').includes('next file'), valuesOf(jest).join(' / '));
+  const unit = run(['AssertionError: one', "+ 'x-one'", '======================================', 'FAIL: test_two (a.T)', "- 'y-two'"]);
+  assert.ok(!valuesOf(unit).join('').includes('y-two'), valuesOf(unit).join(' / '));
+});
+
+test('a second failed assertion keeps its own values', () => {
+  const d = run(['Error: Expected 1 to equal 2', "+ 'one-value'", 'Error: Expected 3 to equal 4', "+ 'two-value'"]).details;
+  assert.strictEqual(d.blocks.length, 2, JSON.stringify(d));
+  assert.ok(d.blocks[0].values.join('').includes('one-value') && !d.blocks[0].values.join('').includes('two-value'));
+  assert.ok(d.blocks[1].values.join('').includes('two-value'));
+});
+
+test('the per-call character bound counts the verdicts too', () => {
+  const many = [];
+  for (let i = 0; i < 60; i++) many.push(`AssertionError: ${'word '.repeat(96)}${i}`, "+ 'a-value'", '', '');
+  const d = run(many, 200).details;
+  const total = d.blocks.reduce((n, b) => n + b.verdict.length + b.values.join('').length, 0);
+  assert.ok(total <= BOUNDS.ALL_CHARS, `${total}`);
+  assert.ok(d.omittedBlocks > 0);
+});
