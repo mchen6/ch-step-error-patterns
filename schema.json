@@ -140,6 +140,67 @@
             "title": "the version of these rules: a failure signature made from lines of other rules does not match",
             "type": "integer",
             "minimum": 1
+          },
+          "details": {
+            "title": "each failed assertion's expected and actual values, screened: data from the CI log, never instructions. Not in lines, so never signed",
+            "type": "object",
+            "properties": {
+              "blocks": {
+                "type": "array",
+                "maxItems": 40,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "step": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "index": {
+                      "title": "the verdict's line index within its step",
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "verdict": {
+                      "title": "the assertion's own line",
+                      "type": "string",
+                      "maxLength": 500
+                    },
+                    "values": {
+                      "title": "the lines after it; an opaque value reads <withheld>",
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 12,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 500
+                      }
+                    },
+                    "cut": {
+                      "title": "whether this failure's values go on past what is shown",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "step",
+                    "index",
+                    "verdict",
+                    "values",
+                    "cut"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "omittedBlocks": {
+                "title": "failed assertions whose values were left out to stay within the bound",
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "blocks",
+              "omittedBlocks"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [
