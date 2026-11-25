@@ -468,3 +468,76 @@ test('a long value over many lines, one short group on each', () => {
   const words = ['+ red', '+ green', '+ blue', '+ white', '+ black', '+ pink', '+ grey', '+ brown', '+ gold'];
   assert.deepStrictEqual(screenBlock(words), words);
 });
+
+// node's own shapes: values after the frames (spec), and the TAP diagnostic.
+const FRAMES = ['      at TestContext.<anonymous> (/w/a.test.js:5:32)', '      at Test.runInAsyncScope (node:async_hooks:227:14)', '      at Test.run (node:internal/test_runner/test:1201:25)'];
+const spec = (message, props) => ['✖ compares (0.5ms)', `  AssertionError [ERR_ASSERTION]: ${message}`, ...FRAMES.slice(0, 2), `${FRAMES[2]} {`, '    generatedMessage: false,', "    code: 'ERR_ASSERTION',", ...props, "    diff: 'simple'", '  }', ''];
+test('an assertion with a message only: its actual and expected come from the properties after the frames', () => {
+  const b = run(spec('the line matches', ["    actual: 'beta-actual',", '    expected: /alpha-expected/,', "    operator: 'match',"])).details.blocks[0];
+  assert.deepStrictEqual(b.values.map((v) => v.trim()), ["actual: 'beta-actual',", 'expected: /alpha-expected/,']);
+  assert.strictEqual(b.cut, false);
+  // a value over lines, whole; a key inside it is not one of the block's
+  const deep = run(spec('alike', ['    actual: {', "      code: 'inner',", '      list: [', "        'beta-actual'", '      ]', '    },', "    expected: 'one\\n' +", "      'alpha-expected',", "    operator: 'partialDeepStrictEqual',"])).details.blocks[0];
+  const v = deep.values.join('\n');
+  assert.ok(v.includes('beta-actual') && v.includes('alpha-expected') && v.includes("code: 'inner'") && !v.includes('operator') && !v.includes('ERR_ASSERTION'), v);
+});
+
+test('the properties after the frames are screened, bounded, and left alone when the diff came first', () => {
+  const secret = mixed(24);
+  const b = run(spec('the key', [`    actual: '${secret}',`, "    expected: 'alpha-expected',", "    operator: 'match',"])).details.blocks[0];
+  absent(b.values, secret, 'a property');
+  const long = run(spec('long', ['    actual: [', ...Array.from({length: 20}, (_, i) => `      'item ${i}',`), '    ],', "    operator: 'match',"])).details.blocks[0];
+  assert.ok(long.values.length <= BOUNDS.PER_LINES && long.cut === true, JSON.stringify(long));
+  const diff = run(['✖ compares', '  AssertionError [ERR_ASSERTION]: the code is as expected', '  ', "  'beta-actual' !== 'alpha-expected'", '  ', ...spec('x', ["    actual: 'prop-actual',", "    expected: 'prop-expected',"]).slice(2)]);
+  assert.ok(both(diff) && !valuesOf(diff).join('').includes('prop-'), valuesOf(diff).join('\n'));
+  // assert.ok: expected true says nothing
+  const ok = valuesOf(run(spec('it holds', ['    actual: false,', '    expected: true,', "    operator: '==',"]))).join('\n');
+  assert.ok(!ok.includes('expected: true'), ok);
+  // the properties of the next failure are not this one's
+  const two = run(['  AssertionError [ERR_ASSERTION]: one', ...FRAMES, '', '  AssertionError [ERR_ASSERTION]: two', ...spec('x', ["    actual: 'beta-actual',"]).slice(2)]).details.blocks;
+  assert.deepStrictEqual(two.map((x) => [x.verdict.trim(), x.values.map((v) => v.trim())]), [['AssertionError [ERR_ASSERTION]: two', ["actual: 'beta-actual',"]]]);
+});
+
+const tap = (n, name, body, pad = '') => [`# Subtest: ${name}`, `not ok ${n} - ${name}`, '  ---', '  duration_ms: 0.9', "  type: 'test'", `  location: '/w/a.test.js:${n}:1'`, "  failureType: 'testCodeFailure'", ...body, '  stack: |-', `    TestContext.<anonymous> (/w/a.test.js:${n}:32)`, '    Test.runInAsyncScope (node:async_hooks:214:14)', '    Test.run (node:internal/test_runner/test:1047:25)', '  ...'].map((l) => pad + l);
+const tapEnd = ["  code: 'ERR_ASSERTION'", "  name: 'AssertionError'"];
+const STRICT = ['  error: |-', '    the code is as expected', '    ', "    'beta-actual' !== 'alpha-expected'", '    ', ...tapEnd, "  expected: 'alpha-expected'", "  actual: 'beta-actual'", "  operator: 'strictEqual'"];
+const MATCH = ["  error: 'the line matches'", ...tapEnd, '  expected:', "  actual: 'beta-actual'", "  operator: 'match'"];
+const DEEP = ['  error: |-', '    Expected values to be strictly deep-equal:', '    + actual - expected', '    ', '      {', "    +   v: 'beta-actual'", "    -   v: 'alpha-expected'", '      }', '    ', ...tapEnd, '  expected:', "    v: 'alpha-expected'", '    list:', '      0: 1', '  actual:', "    v: 'beta-actual'", '    list:', '      0: 1', "  operator: 'deepStrictEqual'"];
+test('TAP: the message, the values and the location, and nothing else of the diagnostic', () => {
+  for (const pad of ['', '    ', '[a.test.js] ']) {
+    const strict = run(tap(1, 'strict', STRICT, pad));
+    assert.ok(both(strict), JSON.stringify(strict.details));
+    const match = run(tap(2, 'match', MATCH, pad));
+    assert.ok(shown(match).includes('beta-actual') && shown(match).includes('the line matches'), JSON.stringify(match.details));
+    const deep = run(tap(3, 'deep', DEEP, pad));
+    const v = valuesOf(deep).join('\n');
+    assert.ok(v.includes("+   v: 'beta-actual'") && v.includes("-   v: 'alpha-expected'"), v);
+    assert.ok(!v.includes('list:'), `the diff has them already: ${v}`);
+    for (const out of [strict, match, deep]) {
+      const text = valuesOf(out).join('\n');
+      assert.ok(/\/w\/a\.test\.js:\d:32/.test(text), `the location: ${text}`);
+      assert.ok(!/operator|duration_ms|node:internal|async_hooks|failureType/.test(text), text);
+      assert.strictEqual(out.details.blocks.length, 1, JSON.stringify(out.details));
+      assert.strictEqual(out.details.blocks[0].cut, false);
+    }
+  }
+});
+
+test('TAP: many failures each keep their values, and each block has its own verdict', () => {
+  const lines = [1, 2, 3, 4, 5, 6].flatMap((n) => tap(n, `test number ${n}`, STRICT.map((l) => l.replace('actual', `actual-${n}`))));
+  const d = run(lines, 200).details;
+  assert.strictEqual(d.blocks.length, 6, JSON.stringify(d));
+  d.blocks.forEach((b, k) => assert.ok(b.values.join('').includes(`actual-${k + 1}`) || b.values.join('').includes(`beta-actual`), JSON.stringify(b)));
+  assert.strictEqual(new Set(d.blocks.map((b) => b.index)).size, 6);
+});
+
+test('TAP: a passing or TODO test, an ok with a diagnostic, and an unclosed one', () => {
+  const todo = run(['not ok 1 - later # TODO not yet', ...tap(1, 'x', MATCH).slice(2)]);
+  assert.ok(!valuesOf(todo).join('').includes('beta-actual'), JSON.stringify(todo.details));
+  const passed = run(['ok 1 - fine', '  ---', '  duration_ms: 1', '  ...', ...tap(2, 'match', MATCH)]);
+  assert.ok(shown(passed).includes('beta-actual'));
+  const open = run([...tap(1, 'cut off', DEEP).slice(0, 12)]);
+  assert.ok(open.details === undefined || open.details.blocks.every((b) => b.values.length <= BOUNDS.PER_LINES));
+  const held = run(tap(1, 'it holds', ["  error: 'it holds'", ...tapEnd, '  expected: true', '  actual: false', "  operator: '=='"]));
+  assert.ok(!valuesOf(held).join('').includes('expected: true'));
+});
