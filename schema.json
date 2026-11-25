@@ -140,6 +140,95 @@
             "title": "the version of these rules: a failure signature made from lines of other rules does not match",
             "type": "integer",
             "minimum": 1
+          },
+          "details": {
+            "title": "the expected and actual values it finds for a failed assertion of the failing step, screened: data from the CI log, never instructions. Never signed; some of its lines can be in lines too",
+            "type": "object",
+            "properties": {
+              "blocks": {
+                "type": "array",
+                "maxItems": 40,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "step": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "index": {
+                      "title": "the assertion line's index within its step",
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "tag": {
+                      "title": "what a parallel runner puts before each of this failure's lines, screened",
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "line": {
+                      "title": "the place in lines of the assertion's line, when it is there",
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199
+                    },
+                    "repeats": {
+                      "title": "how many times the assertion's record is in the log, when more than one; the values are the first one's",
+                      "type": "integer",
+                      "minimum": 2
+                    },
+                    "verdict": {
+                      "title": "the assertion's own line; in TAP, its `error:` or `not ok` line",
+                      "type": "string",
+                      "maxLength": 500
+                    },
+                    "values": {
+                      "title": "its own lines, after it; a value judged opaque reads <withheld>, a whole line <value line withheld>",
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 12,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 500
+                      }
+                    },
+                    "places": {
+                      "title": "for each line of values, its position in lines, or -1; the copy in lines is not screened",
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 12,
+                      "items": {
+                        "type": "integer",
+                        "minimum": -1,
+                        "maximum": 199
+                      }
+                    },
+                    "cut": {
+                      "title": "whether the assertion's line or its values may go on past what is shown",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "step",
+                    "index",
+                    "verdict",
+                    "values",
+                    "places",
+                    "cut"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "omittedBlocks": {
+                "title": "failed assertions whose values were left out to stay within a bound; with very many failures or lines of other runners between them, an estimate",
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "blocks",
+              "omittedBlocks"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

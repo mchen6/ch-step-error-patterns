@@ -10,6 +10,32 @@ Part of the countinghouse client packs. Each package has its own repository. The
 [ch-packs](https://github.com/mchen6/ch-packs) (public); the end-to-end acceptance test, which installs every package and calls the
 tool, runs in [ch-local](https://github.com/mchen6/ch-local)'s CI.
 
+## A failed assertion's values
+
+`details` holds the expected and actual values it finds for a failed assertion
+of the failing step, beside `lines`: they don't count against `maxLines` and
+never reach the failure signature. A format it does not recognise gives none.
+The bounds are 12 value lines and 1,500 characters per failure, and 40 lines and
+4,000 characters per call. Every bound except the 12 value lines also counts the
+assertion's own line.
+`cut` and `omittedBlocks` say when a bound left anything out. A failure's values
+end at its first stack frame (node's `actual` and `expected` after the frames
+are read when nothing comes before them), at two blank lines, at the first other
+line outside an open bracket that is neither a diff's nor a value's and is
+indented less than the assertion's own (or not at all, when that one isn't; a
+Rust panic's message is the exception), or where something else starts; what
+follows is not counted as left out.
+
+The values are log text and can hold what a test compared. A value the screen
+judges not to be words, a number or a name is withheld as `<withheld>`, or, for
+a whole line, `<value line withheld>`. The screen covers `details` only: a line
+in `lines` is not screened.
+
+This part does not redact; pass its output through ch-step-redact, as the pack
+does. The screen is a second layer, not a guarantee: a short secret, one written
+in groups, or one that reads like ordinary words or a plain number can still
+pass, and occasionally a longer one, whole or in part.
+
 ## Development
 
 ```
