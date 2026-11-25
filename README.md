@@ -20,9 +20,10 @@ The bounds are 12 value lines and 1,500 characters per failure, and 40 lines and
 assertion's own line.
 `cut` and `omittedBlocks` say when a bound left anything out. A failure's values
 end at its first stack frame (node's `actual` and `expected` after the frames
-are read when nothing comes before them), at the first line that is neither a
-diff's nor a value's, or where something else starts; what follows is not
-counted as left out.
+are read when nothing comes before them), at the first line outside an open
+bracket that is neither a diff's nor a value's and is indented less than the
+assertion's own (or not at all, when that one isn't), or where something else
+starts; what follows is not counted as left out.
 
 The values are log text and can hold what a test compared. A value the screen
 judges not to be words, a number or a name is withheld as `<withheld>`, or, for
