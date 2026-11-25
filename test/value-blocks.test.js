@@ -785,3 +785,47 @@ test('compact JSON stays whole', () => {
 test('a Set or a Map stays whole', () => {
   for (const line of ['+ Set(3){1,2,3}', '- Map(2){1=>2,3=>4}', '+ Set(3) { 1, 2, 3 }', "- Map(2) { 'a' => 1, 'b' => 2 }"]) assert.strictEqual(screenLine(line), line);
 });
+
+// The narrow medium on the last round.
+test('a byte list stays withheld with a negative number beside it, or its signs stuck to a diff\'s', () => {
+  for (let round = 0; round < 30; round++) {
+    const b = Array.from({length: 16}, () => Math.floor(next() * 256));
+    const key = b.slice(2, 8).join(', ');
+    for (const line of [`+ [${b.join(', ')}, -1]`, `assert [${b.join(', ')}] == -1`, `-${b.join(', ')}`, `+ [-1, ${b.join(', ')}]`]) assert.ok(!screenLine(line).includes(key), `${line} -> ${screenLine(line)}`);
+  }
+  const lines = Array.from({length: 12}, (_, k) => `-${[212, 34, 156, 7, 201, 88, 143, 19, 250, 61, 177, 102][k]}, ${[5, 239, 94, 130, 18, 222, 43, 160, 9, 77, 250, 31][k]}`);
+  const out = screenBlock(lines).join(' ');
+  assert.ok(!out.includes('34') && !out.includes('88') && !out.includes('239'), out);
+});
+
+test('padded columns of short words stay readable', () => {
+  for (const line of ['-   name          type          size', '-   yes             no          none', '  id     name     kind     ok     end', '  foo          bar          baz          yes', 'Mon      Tue      Wed      Thu      Fri', '     a     b     c     d     e     f     g',
+    '1 module                   workers  1  ready    845 ms  RSS    250 MB  boot   156 ms  walk    49 ms']) assert.strictEqual(screenLine(line), line);
+});
+
+test('a blank line ends a Rust panic\'s empty message', () => {
+  const out = run(["thread 'main' panicked at src/a.rs:1:2:", '', 'Running cleanup for other test', '- x'], 1);
+  assert.ok(!('details' in out), JSON.stringify(out.details));
+});
+
+test('a record left out inside a code frame does not make its lines values', () => {
+  const out = run(['AssertionError: expected a to equal b', '- 1', '  9 | foo', '{"level":30,"time":1,"msg":"x"}', '> 10 | bar', '     | ^'], 1);
+  assert.deepStrictEqual(valuesOf(out), ['- 1'], JSON.stringify(out.details));
+});
+
+test('a failure under a parallel runner\'s tag says the tag, screened, and its values are without it', () => {
+  const lines = ['[a.test.js] AssertionError: one differs', '[b.test.js] AssertionError: two differs', "[a.test.js]   + 'one'", "[b.test.js]   + 'two'"];
+  const d = run(lines, 1).details;
+  assert.deepStrictEqual(d.blocks.map((b) => [b.tag, b.values]), [['[a.test.js] ', ["  + 'one'"]], ['[b.test.js] ', ["  + 'two'"]]]);
+  for (const tag of ['web-1  | ', '@app/pkg:test: ', '[0] ']) {
+    const b = run([`${tag}AssertionError: one differs`, `${tag}  + 'one'`], 1).details.blocks[0];
+    assert.deepStrictEqual([b.tag, b.values], [tag, ["  + 'one'"]], tag);
+  }
+  // (a tag is log text too)
+  const secret = mixed(24);
+  const b = run([`[${secret}] AssertionError: one differs`, `[${secret}]   + 'one'`], 1).details.blocks[0];
+  assert.ok(!JSON.stringify(b).includes(secret) && b.tag.includes(WITHHELD), JSON.stringify(b));
+  assert.ok(!('tag' in run(['AssertionError: one', "+ 'one'"], 1).details.blocks[0]));
+  const valid = new Ajv({strict: false}).compile(require('../schema.json').patternService.extract.output);
+  for (const x of [run(lines, 1), run(SHAPES['node --test, tagged'])]) assert.ok(valid(x), JSON.stringify(valid.errors));
+});

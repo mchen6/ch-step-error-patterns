@@ -160,6 +160,11 @@
                       "type": "integer",
                       "minimum": 0
                     },
+                    "tag": {
+                      "title": "what a parallel runner puts before each of this failure's lines, screened",
+                      "type": "string",
+                      "maxLength": 200
+                    },
                     "line": {
                       "title": "the place in lines of the assertion's line, when it is there",
                       "type": "integer",
@@ -214,7 +219,7 @@
                 }
               },
               "omittedBlocks": {
-                "title": "failed assertions whose values were left out to stay within a bound; in a very long log, an estimate",
+                "title": "failed assertions whose values were left out to stay within a bound; with very many failures or lines of other runners between them, an estimate",
                 "type": "integer",
                 "minimum": 0
               }
