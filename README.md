@@ -14,8 +14,9 @@ tool, runs in [ch-local](https://github.com/mchen6/ch-local)'s CI.
 
 `details` holds the expected and actual values it finds for a failed assertion,
 beside `lines`: they don't count against `maxLines` and never reach the failure
-signature. A format it does not recognise gives none. The bounds are 12 lines
-and 1,500 characters per failure, and 40 lines and 4,000 characters per call.
+signature. A format it does not recognise gives none. The bounds are 12 value
+lines and 1,500 characters per failure, and 40 lines and 4,000 characters per
+call. Every bound except the 12 value lines also counts the assertion's own line.
 `cut` and `omittedBlocks` say when anything was left out.
 
 The values are log text and can hold what a test compared. A value the screen
