@@ -121,7 +121,8 @@ test('ordinary values are not withheld', () => {
 });
 
 // Generated values from a fixed seed, so a run is the same every time. Short
-// values can read as a word or a number by chance, so those kinds pin a rate.
+// values can read as a word or a number by chance, so those kinds have a limit:
+// a limit for the test, allowing for random variation, not a measured rate.
 let state = 0x2f6e2b1;
 const next = () => {
   state = (state + 0x6d2b79f5) | 0;
@@ -525,10 +526,10 @@ test('TAP: the message, the values and the location, and nothing else of the dia
 });
 
 test('TAP: many failures each keep their values, and each block has its own verdict', () => {
-  const lines = [1, 2, 3, 4, 5, 6].flatMap((n) => tap(n, `test number ${n}`, STRICT.map((l) => l.replace('actual', `actual-${n}`))));
+  const lines = [1, 2, 3, 4, 5, 6].flatMap((n) => tap(n, `test number ${n}`, STRICT.map((l) => l.replace('beta-actual', `beta-actual-${n}`))));
   const d = run(lines, 200).details;
   assert.strictEqual(d.blocks.length, 6, JSON.stringify(d));
-  d.blocks.forEach((b, k) => assert.ok(b.values.join('').includes(`actual-${k + 1}`) || b.values.join('').includes(`beta-actual`), JSON.stringify(b)));
+  d.blocks.forEach((b, k) => assert.deepStrictEqual(b.values.map((v) => v.trim()).slice(1), [`'beta-actual-${k + 1}' !== 'alpha-expected'`, `TestContext.<anonymous> (/w/a.test.js:${k + 1}:32)`], JSON.stringify(b)));
   assert.strictEqual(new Set(d.blocks.map((b) => b.index)).size, 6);
 });
 
@@ -537,8 +538,12 @@ test('TAP: a passing or TODO test, an ok with a diagnostic, and an unclosed one'
   assert.ok(!valuesOf(todo).join('').includes('beta-actual'), JSON.stringify(todo.details));
   const passed = run(['ok 1 - fine', '  ---', '  duration_ms: 1', '  ...', ...tap(2, 'match', MATCH)]);
   assert.ok(shown(passed).includes('beta-actual'));
-  const open = run([...tap(1, 'cut off', DEEP).slice(0, 12)]);
-  assert.ok(valuesOf(open).length <= BOUNDS.PER_LINES + 1 && !valuesOf(open).some((v) => /node:internal|# Subtest/.test(v)), JSON.stringify(open.details));
+  // (the log ends inside its values: they are kept, and said to go on)
+  const lines = tap(1, 'cut off', DEEP);
+  const open = extractErrors([{name: 'Run tests', lines: [...Array.from({length: 20}, () => 'more output'), ...lines.slice(0, lines.findIndex((l) => l.trim() === 'actual:') + 2)]}], 40);
+  assert.strictEqual(open.details.blocks.length, 1, JSON.stringify(open.details));
+  assert.strictEqual(open.details.blocks[0].cut, true);
+  assert.ok(valuesOf(open).join('\n').includes("+   v: 'beta-actual'"), JSON.stringify(open.details));
   const held = run(tap(1, 'it holds', ["  error: 'it holds'", ...tapEnd, '  expected: true', '  actual: false', "  operator: '=='"]));
   assert.ok(!valuesOf(held).join('').includes('expected: true'));
 });
@@ -707,4 +712,76 @@ test('the look at a log is bounded: each line is read once, and only so many in 
     valueBlocks({texts, kinds: texts.map((x) => (x.includes('Assertion') ? 'assert' : null)), skipped: texts.map(() => false), placeOf: () => -1, isWhole: () => true, repeatsOf: () => 1, tagOf, bodyOf, step: 's', cut: (x) => x});
     assert.ok(tags <= n && bodies <= n, `${line(0)}: ${tags} tags, ${bodies} bodies for ${n} lines`);
   }
+});
+
+// The second high read.
+test('a hex dump is judged as one value: its halves are two blanks apart', () => {
+  for (let round = 0; round < 40; round++) {
+    const b = bytes(16);
+    const pairs = [...b].map((x) => x.toString(16).padStart(2, '0'));
+    const gutter = [...b].map((x) => (x >= 32 && x < 127 ? String.fromCharCode(x) : '.')).join('');
+    for (const line of [`- 00000000  ${pairs.slice(0, 8).join(' ')}  ${pairs.slice(8).join(' ')}  |${gutter}|`, `+ ${pairs.slice(0, 8).join(' ')}   ${pairs.slice(8).join(' ')}`]) {
+      const out = screenLine(line);
+      assert.ok(!out.includes(pairs.slice(0, 8).join(' ')) && !out.includes(pairs.slice(8).join(' ')), out);
+    }
+  }
+  for (const line of ['-rw-r--r--  1 runner docker   120 Nov 22 10:00 out.log', 'Tests:       1 failed, 12 passed, 13 total', '  12:5   error  Expected indentation of 2 spaces  indent', 'name      status   age', 'a  b  c  d  e  f  g  h', '1  2  3  4  5  6  7  8  9  10  11  12  13  14  15  16']) assert.strictEqual(screenLine(line), line);
+});
+
+test('a key as signed bytes, and one after a count, is withheld; ordinary signed lists are not', () => {
+  for (let round = 0; round < 40; round++) {
+    const signed = Array.from({length: 32}, () => Math.floor(next() * 256) - 128);
+    const unsigned = Array.from({length: 32}, () => Math.floor(next() * 256));
+    for (const sep of [', ', ',', ' ']) {
+      assert.ok(!screenLine(`+ [${signed.join(sep)}]`).includes(signed.slice(0, 20).join(sep)), signed.join(sep));
+      for (const line of [`+ key(1024) [${unsigned.join(sep)}]`, `+ key(1024) [${sep.trimStart()}${unsigned.join(sep)} ]`]) assert.ok(!screenLine(line).includes(unsigned.slice(0, 20).join(sep)), line);
+    }
+  }
+  for (const line of ['+ [-1, 0, 1, -1, 0, 1, 0, 0, -1, 1, 2, -2, 0, 1, 0, -1, 1]', '- count(20) [1, 2, 0, 3, 1, 0, 2, 1, 0, 4, 1, 2, 0, 1, 3, 0, 2, 1, 0, 1]', '+ [-100, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50]']) assert.strictEqual(screenLine(line), line);
+});
+
+test('digits in groups that read as a list are shown: a stated limit', () => {
+  for (const line of ['+ 12 34 56 78 90 12 34 56 78 90 12 34 56 78 90', '+ 123 456 789 123 456 789 123 456 789 123', '+ 1,234,567,890,123,456,789,012,345,678']) assert.strictEqual(screenLine(line), line);
+});
+
+test('a table\'s numbered rows are values: only a frame with its mark or caret is code', () => {
+  const rows = ['+ id | name | age', '  12 | alpha-expected | 30', '  13 | beta-actual | 31'];
+  const table = run(noBlanks(['  AssertionError: rows differ', ...rows, '      at f (/w/a.js:1:1)'])).details.blocks[0];
+  assert.deepStrictEqual(table.values.map((v) => v.trim()).slice(0, 3), rows.map((r) => r.trim()), JSON.stringify(table));
+  assert.strictEqual(table.cut, false);
+  const code = run(noBlanks(['  AssertionError: rows differ', '  + 1', '    > 12 |     expect(x).toBe(1);', '      13 |   });', '      at f (/w/a.js:1:1)'])).details.blocks[0];
+  assert.ok(!code.values.join('').includes('|'), JSON.stringify(code));
+});
+
+test('a Rust panic\'s message is the line after it, whatever it looks like', () => {
+  const lines = ["thread 'attach::tests::one' (20091) panicked at src/attach.rs:694:9:", 'Some(GaveUp("20 s (the daemon is starting)"))', 'Compiling the next crate', 'done'];
+  const out = run(lines, 1);
+  assert.deepStrictEqual(valuesOf(out), [lines[1]], JSON.stringify(out.details));
+  const old = run(["thread 'one' panicked at 'assertion failed', src/a.rs:1:2", 'note: run with `RUST_BACKTRACE=1`', 'Compiling the next crate'], 1);
+  assert.ok(!('details' in old), JSON.stringify(old.details));
+});
+
+test('a long value of hex or digits among marks is withheld: too few letters to judge by words', () => {
+  for (const chars of ['0123456789abcdef!@#$%^&*', `${DIGITS}!@#$%^&*`]) {
+    const make = alphabet(chars);
+    let shownWhole = 0;
+    for (let round = 0; round < 100; round++) {
+      const v = make(24);
+      if (screenLine([`+ ${v}`, `- '${v}'`, `+   value: "${v}",`, `+ got ${v} back`][round % 4]).includes(v)) shownWhole++;
+    }
+    // (a limit for the test, allowing for random variation, not a measured rate)
+    assert.ok(shownWhole <= 5, `${chars}: ${shownWhole} of 100 shown`);
+  }
+});
+
+test('a bracketed list stays whole', () => {
+  for (const line of ['+ [[1,2],[3,4],[5,6]]', '+ (12,34),(56,78),(90,12)', '- <1>,<2>,<3>,<4>,<5>', "+ ['1','2','3','4','5']", '+ src/a.js(12,34)']) assert.strictEqual(screenLine(line), line);
+});
+
+test('compact JSON stays whole', () => {
+  for (const line of ['+ {"id":12345,"n":[1,2,3]}', '- [{"a":1},{"a":2},{"a":3}]', '+ {"width":1024,"height":768}', '- {"x":1.5,"y":-2.25,"z":0}', '+ {a:1,b:[2,3],c:{d:4}}']) assert.strictEqual(screenLine(line), line);
+});
+
+test('a Set or a Map stays whole', () => {
+  for (const line of ['+ Set(3){1,2,3}', '- Map(2){1=>2,3=>4}', '+ Set(3) { 1, 2, 3 }', "- Map(2) { 'a' => 1, 'b' => 2 }"]) assert.strictEqual(screenLine(line), line);
 });
