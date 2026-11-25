@@ -30,8 +30,8 @@ a whole line, `<value line withheld>`. The screen covers `details` only: a line
 in `lines` is not screened.
 
 This part does not redact; pass its output through ch-step-redact, as the pack
-does. The screen is a second layer, not a guarantee: a short secret, a number in
-groups, or a secret that reads like ordinary words or a plain number can still
+does. The screen is a second layer, not a guarantee: a short secret, one written
+in groups, or one that reads like ordinary words or a plain number can still
 pass, and occasionally a longer one, whole or in part.
 
 ## Development
