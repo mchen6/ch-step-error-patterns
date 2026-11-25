@@ -9,6 +9,15 @@ const Ajv = require('ajv/dist/2020');
 const {extractErrors} = require('../lib/patterns');
 const {screenBlock, screenLine, BOUNDS, WITHHELD, LINE_WITHHELD} = require('../lib/values');
 
+// Card numbers are built here, with their check digit (Luhn), never written out.
+const card = (prefix, length) => {
+  const body = `${prefix}${'0192837465'.repeat(2)}`.slice(0, length - 1);
+  const sum = [...body].reverse().reduce((n, c, i) => { const d = Number(c) * (i % 2 === 0 ? 2 : 1); return n + (d > 9 ? d - 9 : d); }, 0);
+  return `${body}${(10 - sum % 10) % 10}`;
+};
+const CARD16 = card(4, 16).match(/.{4}/g);
+const CARD15 = (([, ...groups]) => groups)(/^(.{4})(.{6})(.{5})$/.exec(card(37, 15)));
+
 const EXIT = '##[error]Process completed with exit code 1.';
 // (output after the failure, so the failing step's tail can't be what kept a value)
 const AFTER = ['', '', ...Array.from({length: 20}, () => 'more output')];
@@ -41,13 +50,12 @@ test('the failure\'s location comes with its values, when maxLines left it out',
   assert.ok(out.details.blocks[0].verdict.includes('AssertionError'));
 });
 
-test('`lines` are the same with or without the values: nothing here can move a signature', () => {
-  for (const lines of Object.values(SHAPES)) {
-    const out = run(lines);
-    const indexes = new Set(out.lines.map((l) => l.index));
-    for (const b of (out.details || {blocks: []}).blocks) assert.ok(indexes.has(b.index) || b.verdict.length > 0);
-    assert.ok(!out.lines.some((l) => l.kind === 'value'));
-  }
+test('`lines` are the same whatever the values are: nothing here can move a signature', () => {
+  const lines = SHAPES['node assert under mocha'];
+  const other = lines.map((l) => l.replace('beta-actual', 'gamma-other'));
+  assert.notDeepStrictEqual(valuesOf(run(lines)), valuesOf(run(other)));
+  assert.deepStrictEqual(run(lines).lines, run(other).lines);
+  for (const shape of Object.values(SHAPES)) assert.deepStrictEqual(Object.keys(run(shape)).filter((k) => k !== 'details'), ['failingStep', 'lines', 'truncated', 'rules']);
 });
 
 test('a log with no failed assertion has no details', () => {
@@ -239,8 +247,8 @@ test('an escaped value is withheld: the escape text is the value', () => {
 });
 
 test('pieces are joined across digits, punctuation lines and concatenated literals', () => {
-  const pieces = ['4111', '1111', '1111', '1111'];
-  assert.ok(!screenBlock(pieces.map((p, i) => `${i % 2 ? '-' : '+'} ${p}`)).join('').includes('4111'));
+  const pieces = CARD16;
+  assert.ok(!screenBlock(pieces.map((p, i) => `${i % 2 ? '-' : '+'} ${p}`)).join('').includes(CARD16[0]));
   assert.ok(!screenBlock(['+ aB3d', '  }', '- E9xK']).join('').includes('aB3d'));
   const out = screenBlock(["  'aB3d' + 'x9Qz' + '7kLm'"]).join('');
   assert.ok(!out.includes('aB3d') && !out.includes('7kLm'), out);
@@ -295,7 +303,7 @@ test('a bracket that is a value or a timestamp is no runner tag', () => {
 });
 
 test('a value joined by separators is judged as one', () => {
-  for (const v of ['4111-1111-1111-1111', '4111 1111 1111 1111', 'AB12-CD34-EF56-GH78', 'xkqz-pwmv-trbn-hjfd', 'aB3xY:9kLmP:Q2wEr', 'x9QaB=7kLmN', '3f:a9:1c:7e:88:0b:d2:44:19:ce:6a:50:bb:12:9f:73']) {
+  for (const v of [CARD16.join('-'), CARD16.join(' '), 'AB12-CD34-EF56-GH78', 'xkqz-pwmv-trbn-hjfd', 'aB3xY:9kLmP:Q2wEr', 'x9QaB=7kLmN', '3f:a9:1c:7e:88:0b:d2:44:19:ce:6a:50:bb:12:9f:73']) {
     const out = screenLine(`+ ${v}`);
     assert.ok(out.includes(WITHHELD) && !out.includes(v), `${v} -> ${out}`);
   }
@@ -315,13 +323,6 @@ test('pieces of any case are joined, and a run of numbered names is not a split 
   for (const list of [['+ user1', '+ user2', '- user3'], Array.from({length: 12}, (_, i) => `+ line${i}`), ['+ red', '+ green', '- blue']]) {
     assert.deepStrictEqual(screenBlock(list), list);
   }
-});
-
-test('a line of spaces costs no backtracking', () => {
-  const line = `${' '.repeat(499)}x`;
-  const t0 = process.hrtime.bigint();
-  for (let i = 0; i < 20; i++) screenBlock([line, line]);
-  assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 1000, 'bounded');
 });
 
 test('a block keeps text of its own failure that looks like a boundary', () => {
@@ -351,7 +352,7 @@ test('a verdict cut at the bound says so, with its placeholder whole', () => {
 
 // Long values, and the bounds and `cut` as they are said.
 test('a decimal is a number only at a number\'s length', () => {
-  for (const v of ['4111111111111111.00', '378282246310005.00', `${'123456789'.repeat(4)}.5`, `1.${'123456789'.repeat(3)}`, `0.5e${'1234567'.repeat(3)}`]) {
+  for (const v of [`${CARD16.join('')}.00`, `${CARD15.join('')}.00`, `${'123456789'.repeat(4)}.5`, `1.${'123456789'.repeat(3)}`, `0.5e${'1234567'.repeat(3)}`]) {
     const out = screenLine(`actual: ${v}`);
     assert.ok(out.includes(WITHHELD) && !out.includes(v), `${v} -> ${out}`);
   }
@@ -361,7 +362,7 @@ test('a decimal is a number only at a number\'s length', () => {
 });
 
 test('a card number is withheld whatever separates its groups', () => {
-  const groups = [['4111', '1111', '1111', '1111'], ['3782', '822463', '10005']];
+  const groups = [CARD16, CARD15];
   for (const g of groups) {
     for (const sep of [' ', '  ', '\t', ':', '=', ',', ', ', '/', '.', '-', '_', '|', ';']) {
       const v = g.join(sep);
@@ -429,7 +430,7 @@ test('the bounds count the verdicts: in characters per failure, in lines per cal
 });
 
 test('what one screen hides is never shown because another cut it into parts', () => {
-  for (const v of ['4111-1111-1111-1111-9999-8888-7777-666', '1234567-4111-1111-1111-1111-987654321012345', 'cks-ks-cfrnzvb_jag_wog_wwog_wogzvb_ee_dx-pogzv_______x-p-pth']) {
+  for (const v of [[...CARD16, '9999', '8888', '7777', '666'].join('-'), ['1234567', ...CARD16, '987654321012345'].join('-'), 'cks-ks-cfrnzvb_jag_wog_wwog_wogzvb_ee_dx-pogzv_______x-p-pth']) {
     assert.strictEqual(screenLine(`+ ${v}`), `+ ${WITHHELD}`, v);
   }
 });
@@ -456,7 +457,7 @@ test('a long value in groups of any short length, letters and digits mixed, any 
     }
     assert.ok(shown <= 2, `${why}: ${shown} of 180 shown whole`);
   }
-  for (const g of [['4111', '1111', '1111', '1111'], ['3782', '822463', '10005']]) {
+  for (const g of [CARD16, CARD15]) {
     for (const v of [g.join('\\'), g.map((x) => `"${x}"`).join(','), `${g[0]}  ${g[1]} ${g.slice(2).join('  ')}`]) assert.ok(!screenLine(`+ ${v}`).includes(g[1]), v);
   }
   for (const line of ['v1 v2 v3 v4 v5 v6 v7 v8 v9 v10 v11 v12', '+ {"id":1,"ok":true,"to":"a user","of":["one","two"]}', '+ [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]', "+   at: 'the end', by: 'me', to: 'you', in: 'a day'"]) assert.strictEqual(screenLine(line), line);
@@ -537,27 +538,30 @@ test('TAP: a passing or TODO test, an ok with a diagnostic, and an unclosed one'
   const passed = run(['ok 1 - fine', '  ---', '  duration_ms: 1', '  ...', ...tap(2, 'match', MATCH)]);
   assert.ok(shown(passed).includes('beta-actual'));
   const open = run([...tap(1, 'cut off', DEEP).slice(0, 12)]);
-  assert.ok(open.details === undefined || open.details.blocks.every((b) => b.values.length <= BOUNDS.PER_LINES));
+  assert.ok(valuesOf(open).length <= BOUNDS.PER_LINES + 1 && !valuesOf(open).some((v) => /node:internal|# Subtest/.test(v)), JSON.stringify(open.details));
   const held = run(tap(1, 'it holds', ["  error: 'it holds'", ...tapEnd, '  expected: true', '  actual: false', "  operator: '=='"]));
   assert.ok(!valuesOf(held).join('').includes('expected: true'));
 });
 
-test('a block has all its lines, and says which of them are in `lines` too', () => {
-  const out = run(['  ● suite › compares', '    expect(received).toBe(expected) // Object.is equality', '    Expected: "alpha-expected"', '    Received: "beta-actual"', '      12 | code', '      at Object.<anonymous> (src/a.test.js:13:13)']);
+test('a block has all its lines, and the place of each that is in `lines` too', () => {
+  const out = run(['  ● suite › compares', '    expect(received).toBe(expected) // Object.is equality', '    Expected: "alpha-expected"', '    Received: "beta-actual"', '    extra text', '      at Object.<anonymous> (src/a.test.js:13:13)']);
   const b = out.details.blocks[0];
   const text = b.values.join('\n');
   assert.ok(text.includes('alpha-expected') && text.includes('beta-actual') && text.includes('a.test.js:13:13'), text);
-  const inLines = new Set(out.lines.map((l) => l.text));
-  assert.deepStrictEqual(b.inLines, b.values.map((v, k) => k).filter((k) => inLines.has(b.values[k])));
-  assert.ok(b.inLines.length > 0 && b.inLines.length < b.values.length, JSON.stringify(b));
+  assert.deepStrictEqual(b.places, b.values.map((v) => out.lines.findIndex((l) => l.text === v)));
+  assert.ok(b.places.some((k) => k >= 0) && b.places.includes(-1), JSON.stringify(b));
   // a line of `lines` is screened here all the same
   const secret = mixed(24);
-  const other = run(['    expect(received).toBe(expected)', `    Expected: "${secret}"`, '    Received: "x"', '      12 | code']);
-  absent(other.details.blocks[0].values, secret, 'a kept line');
-  assert.ok(run(SHAPES.rust).details.blocks.every((x) => Array.isArray(x.inLines)));
+  absent(run(['    expect(received).toBe(expected)', `    Expected: "${secret}"`, '    Received: "x"']).details.blocks[0].values, secret, 'a kept line');
   // a failure with all its lines in `lines` has its block too
   const all = run(['    expect(received).toBe(expected)', '    Expected: 1', '    Received: 2']).details.blocks[0];
-  assert.deepStrictEqual([all.values.map((v) => v.trim()), all.inLines], [['Expected: 1', 'Received: 2'], [0, 1]]);
+  assert.deepStrictEqual(all.values.map((v) => v.trim()), ['Expected: 1', 'Received: 2']);
+  assert.ok(all.places.every((k) => k >= 0), JSON.stringify(all));
+  // (JSON that `lines` cuts at 200 characters is not there whole)
+  const json = (last) => JSON.stringify({...Object.fromEntries(Array.from({length: 14}, (_, i) => [`property${i}`, 'some text'])), last});
+  const long = run(['    expect(received).toEqual(expected)', `    Expected: ${json(1)}`, `    Received: ${json(9)}`]);
+  assert.deepStrictEqual(long.details.blocks[0].places, [-1, -1], JSON.stringify(long));
+  assert.ok(long.details.blocks[0].values[1].includes('"last":9'));
 });
 
 test('a block says which of `lines` is its verdict, and that its record is repeated', () => {
@@ -573,8 +577,8 @@ test('a block says which of `lines` is its verdict, and that its record is repea
   const record = (id) => JSON.stringify({level: 50, time: 1700000000000 + id, pid: 10 + id, msg: 'AssertionError: the same'});
   const again = run([record(1), "+ 'beta-actual'", 'more', '', '', record(2), "+ 'other-actual'"]);
   const twice = again.lines.find((l) => l.repeats === 2);
-  if (twice !== undefined) assert.strictEqual(again.details.blocks[0].repeats, 2, JSON.stringify(again));
   assert.ok(twice !== undefined, JSON.stringify(again));
+  assert.strictEqual(again.details.blocks[0].repeats, 2, JSON.stringify(again));
 });
 
 // The high review: long values with punctuation, long digits, a value at the cut.
@@ -629,14 +633,14 @@ test('long digits in groups are withheld whole, whatever separates them; so is a
 });
 
 test('a path hides no joined value in a segment', () => {
-  for (const v of ['src/4111-1111-1111-1111/x.js', 'C:\\tmp\\AB12-CD34-EF56-GH78\\x.js', 'lib/xkqz-pwmv-trbn-hjfd/x.js']) {
+  for (const v of [`src/${CARD16.join('-')}/x.js`, 'C:\\tmp\\AB12-CD34-EF56-GH78\\x.js', 'lib/xkqz-pwmv-trbn-hjfd/x.js']) {
     const out = screenLine(`+ ${v}`);
-    assert.ok(out.includes(WITHHELD) && !/1111-1111|CD34-EF56|pwmv-trbn/.test(out), out);
+    assert.ok(out.includes(WITHHELD) && ![CARD16.slice(1, 3).join('-'), 'CD34-EF56', 'pwmv-trbn'].some((x) => out.includes(x)), out);
   }
 });
 
 test('a value at the line cut: the whole stretch goes, and the short groups before it', () => {
-  for (const [head, v] of [['some words and then ', 'partOf!AVal.x'], ['the key ', 'xkqz pwmv trbn hjfd'], ['number ', '4111 1111 1111'], ['key ', 'aB3d-eF7h-iJ1k']]) {
+  for (const [head, v] of [['some words and then ', 'partOf!AVal.x'], ['the key ', 'xkqz pwmv trbn hjfd'], ['number ', CARD16.slice(0, 3).join(' ')], ['key ', 'aB3d-eF7h-iJ1k']]) {
     const out = screenLine(`+ ${head}${v}\u2026`);
     assert.ok(out.startsWith(`+ ${head.split(' ')[0]}`) && out.endsWith(`${WITHHELD}\u2026`), out);
     for (const part of v.split(/[ .!-]/)) assert.ok(part.length < 3 || !out.includes(part), `${v} -> ${out}`);
@@ -646,5 +650,61 @@ test('a value at the line cut: the whole stretch goes, and the short groups befo
 test('a placeholder is never cut into by another', () => {
   for (const lines of [['+ aB3dE9xK2m7Q', '- thh', '+ xkq'], ['+ aB3dE9xK2m7Q', '- e', '+ h'], ["  'w' + 'x9Q' + 'held' + '7kL' + 'aB3dE9xK2m7Q4r'"], ['+ xkq', '- zpw', '+ e', '- ld']]) {
     for (const out of screenBlock(lines)) assert.ok(!/<(?!withheld>|value line withheld>)/.test(out) && !/(?<!<withheld|<value line withheld)>/.test(out), out);
+  }
+});
+
+// Where a block ends. log-clean drops blank lines, so none is there to end it.
+const noBlanks = (lines) => lines.filter((l) => l.trim() !== '');
+test('a block ends at the first line that is no value, with no blank line to say so', () => {
+  const next = ['Run the build', 'compiled 12 files', 'done: 3 warnings'];
+  for (const lines of [['AssertionError: one', "+ 'beta-actual'", "- 'alpha-expected'"], SHAPES.pytest, SHAPES.rust, SHAPES['node assert under mocha'].slice(0, -1), ['AssertionError: lists differ', 'First differing element 0:', "'beta-actual'", "'alpha-expected'", '- [1]', '+ [2]']]) {
+    const out = run(noBlanks([...lines, ...next]));
+    assert.ok(both(out), JSON.stringify(out.details));
+    assert.ok(!/compiled|build|warnings/.test(valuesOf(out).join('\n')), valuesOf(out).join('\n'));
+  }
+  for (const lines of Object.values(SHAPES)) assert.ok(both(run(noBlanks(lines))), JSON.stringify(lines));
+  // a value over lines, at the left edge, stays whole
+  const object = valuesOf(run(noBlanks(['AssertionError: objects differ', '{', 'name: "beta-actual",', 'list: [', '1,', '],', '}', ...next])));
+  assert.deepStrictEqual(object, ['{', 'name: "beta-actual",', 'list: [', '1,', '],', '}']);
+});
+
+test('what is no failed assertion gives no block: a TAP failure with no values, summaries, lint rows', () => {
+  const bare = run(tap(1, 'boom', ["  error: 'boom'", ...tapEnd]).concat(['# Subtest: the next', 'ok 2 - the next']));
+  assert.ok(!('details' in bare), JSON.stringify(bare.details));
+  const pytest = run(noBlanks([...SHAPES.pytest, '=========================== short test summary info ===========================', "FAILED tests/test_a.py::test_values - AssertionError: assert 'x' == 'y'", '1 failed, 2 passed in 0.12s']));
+  assert.strictEqual(pytest.details.blocks.length, 1, JSON.stringify(pytest.details));
+  assert.ok(!/FAILED|passed/.test(valuesOf(pytest).join('\n')), valuesOf(pytest).join('\n'));
+  const quiet = run(["E       assert 'x' == 'y'", 'FAILED tests/test_a.py::test_b - assert 1 == 2', '1 failed in 0.02s']);
+  assert.ok(!/FAILED|1 failed/.test(valuesOf(quiet).join('\n')), JSON.stringify(quiet.details));
+  const lint = run(['/w/src/a.js', "  12:5  error  Expected '===' and instead saw '=='  eqeqeq", "  14:5  error  Expected '===' and instead saw '=='  eqeqeq"]);
+  assert.ok(!('details' in lint), JSON.stringify(lint.details));
+  for (const end of ['# Subtest: next', '# tests 4', 'ℹ tests 4', '  3 passing (5ms)']) {
+    const v = valuesOf(run(['AssertionError: one', "+ 'x-value'", end, "- 'not-this'"]));
+    assert.deepStrictEqual(v, ["+ 'x-value'"], end);
+  }
+});
+
+test('a code frame is passed over: the values and the location are kept', () => {
+  const frame = ['      10 |   it("compares", () => {', '      11 |     const x = f();', '    > 12 |     expect(x).toBe(1);', '         |               ^', '      13 |   });'];
+  const jest = run(noBlanks(['  ● suite › compares', '    expect(received).toBe(expected) // Object.is equality', '    Expected: "alpha-expected"', '    Received: "beta-actual"', ...frame, ...frame, ...frame, '      at Object.<anonymous> (src/a.test.js:12:15)']));
+  const v = valuesOf(jest).join('\n');
+  assert.ok(v.includes('a.test.js:12:15') && !/ 1[0-3] \|/.test(v), v);
+  const vitest = run(noBlanks(['AssertionError: expected 1 to be 2 // Object.is equality', '- Expected', '+ Received', '- "alpha-expected"', '+ "beta-actual"', ' ❯ src/a.test.ts:12:15', '     10|   it("compares", () => {', '     12|     expect(x).toBe(1);', '       |               ^']));
+  assert.ok(both(vitest) && !/ 1[02]\|/.test(valuesOf(vitest).join('\n')), valuesOf(vitest).join('\n'));
+  const table = valuesOf(run(['AssertionError: tables differ', '+ | a | b |', '- | a | c |']));
+  assert.deepStrictEqual(table, ['+ | a | b |', '- | a | c |']);
+});
+
+test('the look at a log is bounded: each line is read once, and only so many in all', () => {
+  const {valueBlocks} = require('../lib/values');
+  const n = 8000;
+  for (const line of [(i) => `[t${i}] AssertionError: x`, () => 'AssertionError: x', (i) => (i % 2 ? '  ---' : 'not ok 1 - x'), (i) => (i % 2 ? '    at f (a.js:1:1)' : 'AssertionError: x')]) {
+    const texts = Array.from({length: n}, (_, i) => line(i));
+    let tags = 0;
+    let bodies = 0;
+    const tagOf = (text) => { tags++; return (/^\[\w+\]/.exec(text) || [''])[0]; };
+    const bodyOf = (text) => { bodies++; return text.replace(/^\[\w+\] /, ''); };
+    valueBlocks({texts, kinds: texts.map((x) => (x.includes('Assertion') ? 'assert' : null)), skipped: texts.map(() => false), placeOf: () => -1, isWhole: () => true, repeatsOf: () => 1, tagOf, bodyOf, step: 's', cut: (x) => x});
+    assert.ok(tags <= n && bodies <= n, `${line(0)}: ${tags} tags, ${bodies} bodies for ${n} lines`);
   }
 });

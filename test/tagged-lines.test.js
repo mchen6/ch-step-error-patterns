@@ -56,3 +56,13 @@ test('a Rust panic with a thread id is a panic: its message is kept beside it', 
 test('these rules are version 4: a signature made under 3 is read again', () => {
   assert.strictEqual(RULES, 4);
 });
+
+test('a file named after a severity is a runner\'s tag; a severity alone is the line\'s own', () => {
+  const {extractErrors} = require('../lib/patterns');
+  const run = (lines) => extractErrors([{name: 'Run tests', lines: [...lines, ...Array.from({length: 20}, () => 'more output'), '##[error]Process completed with exit code 1.']}], 40).lines.map((l) => l.text);
+  for (const tag of ['[error-handler.test.js]', '[src/fatal.test.js]', '[warn.test.ts]', 'pkg-error | ', '@app/error:test:']) {
+    const kept = run([`${tag} ✔ says Error: boom when it must (1ms)`.replace('|  ', '| ')]);
+    assert.ok(!kept.some((l) => l.includes('says Error')), `${tag}: ${kept.join(' / ')}`);
+  }
+  for (const line of ['[ERROR] PASS the build: Error: boom', '[main ERROR] ok Error: boom']) assert.ok(run([line]).includes(line), line);
+});

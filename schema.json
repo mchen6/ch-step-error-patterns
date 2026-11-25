@@ -186,14 +186,15 @@
                         "maxLength": 500
                       }
                     },
-                    "inLines": {
-                      "title": "the places in values of lines that are in lines too (there not screened)",
+                    "places": {
+                      "title": "for each line of values, its position in lines, or -1; the copy in lines is not screened",
                       "type": "array",
+                      "minItems": 1,
                       "maxItems": 12,
                       "items": {
                         "type": "integer",
-                        "minimum": 0,
-                        "maximum": 11
+                        "minimum": -1,
+                        "maximum": 199
                       }
                     },
                     "cut": {
@@ -206,7 +207,7 @@
                     "index",
                     "verdict",
                     "values",
-                    "inLines",
+                    "places",
                     "cut"
                   ],
                   "additionalProperties": false
