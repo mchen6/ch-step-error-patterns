@@ -427,3 +427,44 @@ test('the bounds count the verdicts: in characters per failure, in lines per cal
   assert.ok(b.verdict.length + b.values.join('').length <= BOUNDS.PER_CHARS, `${b.verdict.length + b.values.join('').length}`);
   assert.strictEqual(b.cut, true);
 });
+
+test('what one screen hides is never shown because another cut it into parts', () => {
+  for (const v of ['4111-1111-1111-1111-9999-8888-7777-666', '1234567-4111-1111-1111-1111-987654321012345', 'cks-ks-cfrnzvb_jag_wog_wwog_wogzvb_ee_dx-pogzv_______x-p-pth']) {
+    assert.strictEqual(screenLine(`+ ${v}`), `+ ${WITHHELD}`, v);
+  }
+});
+
+test('a long value in groups of any short length, letters and digits mixed, any separator', () => {
+  const pool = (chars) => (n) => Array.from({length: n}, () => chars[Math.floor(next() * chars.length)]).join('');
+  const lower = 'abcdefghijklmnopqrstuvwxyz';
+  const base62 = pool(`${lower}${lower.toUpperCase()}0123456789`);
+  const base32 = pool(`${lower.toUpperCase()}234567`);
+  for (const v of ['kQ-7z-Pa-x9-Rt-yU-mN-0p-Xl-eK-iV-uZ-bA-qW-xZ-jK-vQ', 'kq:zp:ab:xw:rt:yu:mn:op:xl:ek:iv:uz:ba:qw:xz:jk:vq', 'kqz12:bhw34:rty56:mnp78:xlk90:vzb11:qwx22', 'kqz12 bhw34 rty56 mnp78 xlk90 vzb11 qwx22',
+    'kqzpa::bhewu::rtyui::mnopa::xleki::vuzba', 'kqzpa+bhewu+rtyui+mnopa+xleki+vuzba', 'kqzpa - bhewu - rtyui - mnopa - xleki - vuzba', '"kqzpa", "bhewu", "rtyui", "mnopa", "xleki", "vuzba"']) {
+    const out = screenLine(`+ ${v}`);
+    const middle = v.match(/[A-Za-z0-9]+/g).slice(1, -1);
+    assert.ok(out.includes(WITHHELD) && !middle.some((g) => out.includes(g)), `${v} -> ${out}`);
+  }
+  const kinds = [['base62 in twos', () => base62(48).match(/.{2}/g)], ['base62 in threes', () => base62(36).match(/.{3}/g)], ['base32 in fours', () => base32(32).match(/.{4}/g)], ['base62 in ones', () => base62(40).match(/./g)]];
+  for (const [why, make] of kinds) {
+    let shown = 0;
+    for (let round = 0; round < 60; round++) {
+      for (const sep of [' ', ':', '-']) {
+        const v = make().join(sep);
+        if (screenLine(`+ ${v}`).includes(v)) shown++;
+      }
+    }
+    assert.ok(shown <= 2, `${why}: ${shown} of 180 shown whole`);
+  }
+  for (const g of [['4111', '1111', '1111', '1111'], ['3782', '822463', '10005']]) {
+    for (const v of [g.join('\\'), g.map((x) => `"${x}"`).join(','), `${g[0]}  ${g[1]} ${g.slice(2).join('  ')}`]) assert.ok(!screenLine(`+ ${v}`).includes(g[1]), v);
+  }
+  for (const line of ['v1 v2 v3 v4 v5 v6 v7 v8 v9 v10 v11 v12', '+ {"id":1,"ok":true,"to":"a user","of":["one","two"]}', '+ [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]', "+   at: 'the end', by: 'me', to: 'you', in: 'a day'"]) assert.strictEqual(screenLine(line), line);
+});
+
+test('a long value over many lines, one short group on each', () => {
+  const out = screenBlock(['+ kqzpa', '+ bhewu', '+ rtyui', '+ mnopa', '+ xleki', '+ vuzba', '+ kuxot']).join(' ');
+  assert.ok(!out.includes('rtyui') && !out.includes('mnopa'), out);
+  const words = ['+ red', '+ green', '+ blue', '+ white', '+ black', '+ pink', '+ grey', '+ brown', '+ gold'];
+  assert.deepStrictEqual(screenBlock(words), words);
+});
