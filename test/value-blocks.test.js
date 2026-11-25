@@ -348,3 +348,82 @@ test('a verdict cut at the bound says so, with its placeholder whole', () => {
   assert.strictEqual(b.cut, true);
   assert.ok(!/<[a-z]*\u2026$/.test(b.verdict), b.verdict.slice(-20));
 });
+
+// Long values, and the bounds and `cut` as they are said.
+test('a decimal is a number only at a number\'s length', () => {
+  for (const v of ['4111111111111111.00', '378282246310005.00', `${'123456789'.repeat(4)}.5`, `1.${'123456789'.repeat(3)}`, `0.5e${'1234567'.repeat(3)}`]) {
+    const out = screenLine(`actual: ${v}`);
+    assert.ok(out.includes(WITHHELD) && !out.includes(v), `${v} -> ${out}`);
+  }
+  for (const v of ['0.30000000000000004', '1.0000000000000002', '1700000000.123456', '-12.5', '1.5e-10', '0.00000000000000000001']) {
+    assert.strictEqual(screenLine(`actual: ${v}`), `actual: ${v}`);
+  }
+});
+
+test('a card number is withheld whatever separates its groups', () => {
+  const groups = [['4111', '1111', '1111', '1111'], ['3782', '822463', '10005']];
+  for (const g of groups) {
+    for (const sep of [' ', '  ', '\t', ':', '=', ',', ', ', '/', '.', '-', '_', '|', ';']) {
+      const v = g.join(sep);
+      const out = screenLine(`+ ${v} end`);
+      assert.ok(!out.includes(g[1]) && out.includes(WITHHELD), `${JSON.stringify(v)} -> ${out}`);
+    }
+  }
+  // (four numbers that are no card)
+  for (const line of ['+ [1024, 2048, 4096, 8192]', '+ 2026-11-22 17:58:09', '+ [2021,2022,2023,2024]', '+ 1024:2048:4096:8192']) assert.strictEqual(screenLine(line), line);
+});
+
+test('a long generated value in short groups is judged as one', () => {
+  const letters = 'abcdefghijklmnopqrstuvwxyz';
+  const word = (n) => Array.from({length: n}, () => letters[Math.floor(next() * 26)]).join('');
+  const fixed = ['kqzpa:bhewu:rtyui:mnopa:xleki:vuzba', 'kqzpa_bhewu_rtyui_mnopa_xleki_vuzba', 'kqzpa bhewu rtyui mnopa xleki vuzba', 'kqzpa/bhewu/rtyui/mnopa/xleki/vuzba'];
+  for (const v of fixed) {
+    const out = screenLine(`+ some words ${v} more words`);
+    assert.ok(!out.includes('rtyui') && out.includes(WITHHELD), `${v} -> ${out}`);
+  }
+  let shown = 0;
+  let total = 0;
+  for (let round = 0; round < 60; round++) {
+    const fingerprint = hex(20).match(/.{4}/g);
+    const pairs = hex(20).match(/.{2}/g);
+    const mix = Array.from({length: 8}, () => mixed(6).slice(0, 4));
+    for (const g of [fingerprint, pairs, mix, Array.from({length: 7}, () => word(5)), Array.from({length: 9}, () => word(4))]) {
+      for (const sep of [' ', ':', '-', '_']) {
+        total++;
+        const out = screenLine(`the value is ${g.join(sep)} here`);
+        if (out.includes(g.slice(2, 5).join(sep))) shown++;
+      }
+    }
+  }
+  assert.ok(shown / total <= 0.01, `${shown} of ${total} shown`);
+  for (const line of ['+ it is not at all the same one as the last run of it', 'a joiner between two letters is kept as it was in it', '+ the_shim_follows_daemon_json_to_a_lock', 'packages/a/src/lib/core/test/unit/db/x.js:12:3',
+    '- node-20-on-github-actions-runners', '+ 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16', 'took 10ms 12ms 14ms 18ms 20ms 22ms 31ms 40ms', '+ [100, 200, 300, 400, 500, 600, 700, 800]', 'D:\\a\\repo\\src\\lib\\core\\test\\unit\\db\\x.js', 'user1, user2, user3, user4, user5, user6',
+    'MODULE_NOT_IN_THE_POOL_AT_ALL_YET']) {
+    assert.strictEqual(screenLine(line), line);
+  }
+});
+
+test('a line or a verdict the log had already cut says so, though screening took its mark', () => {
+  // (a hidden character withholds the whole line, the mark with it)
+  const hidden = String.fromCharCode(0x200b);
+  const at500 = (head) => `${head}${'word '.repeat(120)}`;
+  const value = run(['AssertionError: one', at500(`+ x${hidden}`), '']).details.blocks[0];
+  assert.deepStrictEqual([value.values, value.cut], [[LINE_WITHHELD], true]);
+  const marked = run(['AssertionError: one', `+ x${hidden} some\u2026`, '']).details.blocks[0];
+  assert.strictEqual(marked.cut, true);
+  const verdict = run([at500(`AssertionError: x${hidden}`), '+ one', '']).details.blocks[0];
+  assert.deepStrictEqual([verdict.verdict, verdict.cut], [LINE_WITHHELD, true]);
+  assert.strictEqual(run(['AssertionError: \u2026', '+ one', '']).details.blocks[0].cut, true);
+  assert.strictEqual(run(['AssertionError: two', '+ one', '']).details.blocks[0].cut, false);
+});
+
+test('the bounds count the verdicts: in characters per failure, in lines per call', () => {
+  const many = [];
+  for (let i = 0; i < 45; i++) many.push(`AssertionError: number ${i}`, '+ one', '', '');
+  const d = run(many, 200).details;
+  assert.ok(d.blocks.reduce((n, b) => n + 1 + b.values.length, 0) <= BOUNDS.ALL_LINES, `${d.blocks.length} blocks`);
+  assert.strictEqual(d.blocks.length + d.omittedBlocks, 45);
+  const b = run([`AssertionError: ${'word '.repeat(90)}`, ...Array.from({length: 8}, (_, i) => `+ ${'word '.repeat(45)}${i}`)]).details.blocks[0];
+  assert.ok(b.verdict.length + b.values.join('').length <= BOUNDS.PER_CHARS, `${b.verdict.length + b.values.join('').length}`);
+  assert.strictEqual(b.cut, true);
+});
