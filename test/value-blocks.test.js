@@ -576,3 +576,75 @@ test('a block says which of `lines` is its verdict, and that its record is repea
   if (twice !== undefined) assert.strictEqual(again.details.blocks[0].repeats, 2, JSON.stringify(again));
   assert.ok(twice !== undefined, JSON.stringify(again));
 });
+
+// The high review: long values with punctuation, long digits, a value at the cut.
+const alphabet = (chars) => (n) => Array.from({length: n}, () => chars[Math.floor(next() * chars.length)]).join('');
+const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
+const DIGITS = '0123456789';
+const longest = (value, out) => {
+  let best = 0;
+  for (let i = 0; i < value.length; i++) while (i + best < value.length && out.includes(value.slice(i, i + best + 1))) best++;
+  return best;
+};
+test('a long generated value with punctuation is withheld, wherever it sits', () => {
+  const ascii = alphabet(Array.from({length: 94}, (_, i) => String.fromCharCode(33 + i)).join(''));
+  const django = alphabet(`${LETTERS}${DIGITS}!@#$%^&*(-_=+)`);
+  for (const [why, make, n, whole, part] of [['ascii', ascii, 24, 0.03, 0.1], ['ascii', ascii, 40, 0, 0.05], ['django', django, 24, 0.05, 0.1], ['django', django, 50, 0, 0.03]]) {
+    let shownWhole = 0;
+    let shownPart = 0;
+    for (let round = 0; round < 100; round++) {
+      const v = make(n);
+      const out = screenLine([`+ ${v}`, `- '${v}'`, `+   value: "${v}",`, `+ got ${v} back`][round % 4]);
+      if (out.includes(v)) shownWhole++;
+      if (longest(v, out) >= 12) shownPart++;
+    }
+    assert.ok(shownWhole <= whole * 100 && shownPart <= part * 100, `${why} ${n}: whole ${shownWhole}, 12 in a row ${shownPart}, of 100`);
+  }
+  for (const line of ['+ this.items[i].count===0&&other>=limit', '+ {"code":"MODULE_NOT_LISTED","retryable":false,"why":"unset"}', 'expect(received).toBe(expected)', 'https://example.invalid/docs/settings?tab=limits&view=all', "+ '@countinghouse/ch-step-redact/lib/rules.js'", 'D:\\a\\repo\\test\\client-conditions.test.js:336:10',
+    '+ --moduleSandbox=enforce --maxRequestBody=1mb', '+ 2026-11-22T17:58:09.123Z', '- {"a":1,"b":2,"c":3,"d":4,"e":5}', '+ <Buffer 01 02>', '+ ${HOME}/.config/app/settings.json', "require('../lib/errors').catalogue['MODULE_LOAD_FAILED']"]) {
+    assert.strictEqual(screenLine(line), line);
+  }
+});
+
+test('long digits in groups are withheld whole, whatever separates them; so is a key as a list of bytes', () => {
+  const digits = alphabet(DIGITS);
+  const seps = [' ', '  ', '\t', ':', '=', ',', ', ', '/', '.', '-', '_', '|', '\\', ';'];
+  for (const sep of seps) {
+    for (const widths of [[7, 4, 4, 4, 4, 15], [5, 5, 5, 5, 5, 5, 5, 5], [8, 8, 8, 8, 8], [4, 4, 4, 4, 4, 4]]) {
+      const g = widths.map(digits);
+      const out = screenLine(`+ '${g.join(sep)}' end`);
+      assert.ok(!g.some((x) => out.includes(x)), `${JSON.stringify(sep)} ${widths}: ${out}`);
+    }
+  }
+  const list = (n) => Array.from({length: n}, () => Math.floor(next() * 256));
+  for (const sep of [', ', ',', ' ']) {
+    const b = list(32);
+    const out = screenLine(`+ [${b.join(sep)}]`);
+    assert.ok(out.includes(WITHHELD) && !out.includes(b.slice(3, 8).join(sep)), out);
+  }
+  const b = list(32);
+  const lines = [0, 1, 2, 3].map((k) => `+   ${b.slice(k * 8, k * 8 + 8).join(', ')},`);
+  assert.ok(!screenBlock(['+ [', ...lines, '+ ]']).join(' ').includes(b.slice(9, 13).join(', ')), 'over lines');
+  for (const line of ['+ [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116]', '+ [1700000000000, 1700000000100, 1700000000200]', '+ [0, 1, 0, 0, 2, 1, 0, 3, 0, 1, 1, 0, 0, 2, 0, 1, 0]', '+ 1024, 2048, 4096, 8192, 9000, 9100, 9200, 9300']) assert.strictEqual(screenLine(line), line);
+});
+
+test('a path hides no joined value in a segment', () => {
+  for (const v of ['src/4111-1111-1111-1111/x.js', 'C:\\tmp\\AB12-CD34-EF56-GH78\\x.js', 'lib/xkqz-pwmv-trbn-hjfd/x.js']) {
+    const out = screenLine(`+ ${v}`);
+    assert.ok(out.includes(WITHHELD) && !/1111-1111|CD34-EF56|pwmv-trbn/.test(out), out);
+  }
+});
+
+test('a value at the line cut: the whole stretch goes, and the short groups before it', () => {
+  for (const [head, v] of [['some words and then ', 'partOf!AVal.x'], ['the key ', 'xkqz pwmv trbn hjfd'], ['number ', '4111 1111 1111'], ['key ', 'aB3d-eF7h-iJ1k']]) {
+    const out = screenLine(`+ ${head}${v}\u2026`);
+    assert.ok(out.startsWith(`+ ${head.split(' ')[0]}`) && out.endsWith(`${WITHHELD}\u2026`), out);
+    for (const part of v.split(/[ .!-]/)) assert.ok(part.length < 3 || !out.includes(part), `${v} -> ${out}`);
+  }
+});
+
+test('a placeholder is never cut into by another', () => {
+  for (const lines of [['+ aB3dE9xK2m7Q', '- thh', '+ xkq'], ['+ aB3dE9xK2m7Q', '- e', '+ h'], ["  'w' + 'x9Q' + 'held' + '7kL' + 'aB3dE9xK2m7Q4r'"], ['+ xkq', '- zpw', '+ e', '- ld']]) {
+    for (const out of screenBlock(lines)) assert.ok(!/<(?!withheld>|value line withheld>)/.test(out) && !/(?<!<withheld|<value line withheld)>/.test(out), out);
+  }
+});
