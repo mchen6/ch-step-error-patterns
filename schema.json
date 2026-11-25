@@ -160,8 +160,19 @@
                       "type": "integer",
                       "minimum": 0
                     },
+                    "line": {
+                      "title": "the place in lines of the assertion's line, when it is there",
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 199
+                    },
+                    "repeats": {
+                      "title": "how many times the assertion's record is in the log, when more than one; the values are the first one's",
+                      "type": "integer",
+                      "minimum": 2
+                    },
                     "verdict": {
-                      "title": "the assertion's own line",
+                      "title": "the assertion's own line; in TAP, its `error:` or `not ok` line",
                       "type": "string",
                       "maxLength": 500
                     },
@@ -175,8 +186,18 @@
                         "maxLength": 500
                       }
                     },
+                    "inLines": {
+                      "title": "the places in values of lines that are in lines too (there not screened)",
+                      "type": "array",
+                      "maxItems": 12,
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 11
+                      }
+                    },
                     "cut": {
-                      "title": "whether this failure's values go on past what is shown",
+                      "title": "whether the assertion's line or its values may go on past what is shown",
                       "type": "boolean"
                     }
                   },
@@ -185,6 +206,7 @@
                     "index",
                     "verdict",
                     "values",
+                    "inLines",
                     "cut"
                   ],
                   "additionalProperties": false

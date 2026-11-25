@@ -474,7 +474,7 @@ const FRAMES = ['      at TestContext.<anonymous> (/w/a.test.js:5:32)', '      a
 const spec = (message, props) => ['✖ compares (0.5ms)', `  AssertionError [ERR_ASSERTION]: ${message}`, ...FRAMES.slice(0, 2), `${FRAMES[2]} {`, '    generatedMessage: false,', "    code: 'ERR_ASSERTION',", ...props, "    diff: 'simple'", '  }', ''];
 test('an assertion with a message only: its actual and expected come from the properties after the frames', () => {
   const b = run(spec('the line matches', ["    actual: 'beta-actual',", '    expected: /alpha-expected/,', "    operator: 'match',"])).details.blocks[0];
-  assert.deepStrictEqual(b.values.map((v) => v.trim()), ["actual: 'beta-actual',", 'expected: /alpha-expected/,']);
+  assert.deepStrictEqual(b.values.map((v) => v.trim()), ['at TestContext.<anonymous> (/w/a.test.js:5:32)', "actual: 'beta-actual',", 'expected: /alpha-expected/,']);
   assert.strictEqual(b.cut, false);
   // a value over lines, whole; a key inside it is not one of the block's
   const deep = run(spec('alike', ['    actual: {', "      code: 'inner',", '      list: [', "        'beta-actual'", '      ]', '    },', "    expected: 'one\\n' +", "      'alpha-expected',", "    operator: 'partialDeepStrictEqual',"])).details.blocks[0];
@@ -495,7 +495,7 @@ test('the properties after the frames are screened, bounded, and left alone when
   assert.ok(!ok.includes('expected: true'), ok);
   // the properties of the next failure are not this one's
   const two = run(['  AssertionError [ERR_ASSERTION]: one', ...FRAMES, '', '  AssertionError [ERR_ASSERTION]: two', ...spec('x', ["    actual: 'beta-actual',"]).slice(2)]).details.blocks;
-  assert.deepStrictEqual(two.map((x) => [x.verdict.trim(), x.values.map((v) => v.trim())]), [['AssertionError [ERR_ASSERTION]: two', ["actual: 'beta-actual',"]]]);
+  assert.deepStrictEqual(two.map((x) => [x.verdict.trim(), x.values.map((v) => v.trim())]), [['AssertionError [ERR_ASSERTION]: two', ['at TestContext.<anonymous> (/w/a.test.js:5:32)', "actual: 'beta-actual',"]]]);
 });
 
 const tap = (n, name, body, pad = '') => [`# Subtest: ${name}`, `not ok ${n} - ${name}`, '  ---', '  duration_ms: 0.9', "  type: 'test'", `  location: '/w/a.test.js:${n}:1'`, "  failureType: 'testCodeFailure'", ...body, '  stack: |-', `    TestContext.<anonymous> (/w/a.test.js:${n}:32)`, '    Test.runInAsyncScope (node:async_hooks:214:14)', '    Test.run (node:internal/test_runner/test:1047:25)', '  ...'].map((l) => pad + l);
@@ -540,4 +540,39 @@ test('TAP: a passing or TODO test, an ok with a diagnostic, and an unclosed one'
   assert.ok(open.details === undefined || open.details.blocks.every((b) => b.values.length <= BOUNDS.PER_LINES));
   const held = run(tap(1, 'it holds', ["  error: 'it holds'", ...tapEnd, '  expected: true', '  actual: false', "  operator: '=='"]));
   assert.ok(!valuesOf(held).join('').includes('expected: true'));
+});
+
+test('a block has all its lines, and says which of them are in `lines` too', () => {
+  const out = run(['  ● suite › compares', '    expect(received).toBe(expected) // Object.is equality', '    Expected: "alpha-expected"', '    Received: "beta-actual"', '      12 | code', '      at Object.<anonymous> (src/a.test.js:13:13)']);
+  const b = out.details.blocks[0];
+  const text = b.values.join('\n');
+  assert.ok(text.includes('alpha-expected') && text.includes('beta-actual') && text.includes('a.test.js:13:13'), text);
+  const inLines = new Set(out.lines.map((l) => l.text));
+  assert.deepStrictEqual(b.inLines, b.values.map((v, k) => k).filter((k) => inLines.has(b.values[k])));
+  assert.ok(b.inLines.length > 0 && b.inLines.length < b.values.length, JSON.stringify(b));
+  // a line of `lines` is screened here all the same
+  const secret = mixed(24);
+  const other = run(['    expect(received).toBe(expected)', `    Expected: "${secret}"`, '    Received: "x"', '      12 | code']);
+  absent(other.details.blocks[0].values, secret, 'a kept line');
+  assert.ok(run(SHAPES.rust).details.blocks.every((x) => Array.isArray(x.inLines)));
+  // a failure with all its lines in `lines` has its block too
+  const all = run(['    expect(received).toBe(expected)', '    Expected: 1', '    Received: 2']).details.blocks[0];
+  assert.deepStrictEqual([all.values.map((v) => v.trim()), all.inLines], [['Expected: 1', 'Received: 2'], [0, 1]]);
+});
+
+test('a block says which of `lines` is its verdict, and that its record is repeated', () => {
+  const out = run(['noise Error: one', ...SHAPES['node assert under mocha']]);
+  const b = out.details.blocks[0];
+  assert.ok(Number.isInteger(b.line) && out.lines[b.line].text.includes('AssertionError') && out.lines[b.line].index === b.index, JSON.stringify(out));
+  assert.ok(!('repeats' in b));
+  // (two steps of one name: the place, not the step and the index, tells them apart)
+  const same = extractErrors([{name: 'Run tests', lines: ['Error: x', '##[error]Process completed with exit code 1.']}, {name: 'Run tests', lines: ['AssertionError: y', "+ 'beta-actual'", ...AFTER, EXIT]}], 40);
+  assert.ok(same.lines[same.details.blocks[0].line].text.includes('AssertionError'), JSON.stringify(same));
+  const left = run(SHAPES['node assert under mocha'], 1).details.blocks[0];
+  assert.ok(!('line' in left), JSON.stringify(left));
+  const record = (id) => JSON.stringify({level: 50, time: 1700000000000 + id, pid: 10 + id, msg: 'AssertionError: the same'});
+  const again = run([record(1), "+ 'beta-actual'", 'more', '', '', record(2), "+ 'other-actual'"]);
+  const twice = again.lines.find((l) => l.repeats === 2);
+  if (twice !== undefined) assert.strictEqual(again.details.blocks[0].repeats, 2, JSON.stringify(again));
+  assert.ok(twice !== undefined, JSON.stringify(again));
 });

@@ -17,7 +17,10 @@ beside `lines`: they don't count against `maxLines` and never reach the failure
 signature. A format it does not recognise gives none. The bounds are 12 value
 lines and 1,500 characters per failure, and 40 lines and 4,000 characters per
 call. Every bound except the 12 value lines also counts the assertion's own line.
-`cut` and `omittedBlocks` say when anything was left out.
+`cut` and `omittedBlocks` say when a bound left anything out. A failure's values
+end at its first stack frame (node's `actual` and `expected` after the frames
+are read when nothing comes before them), at two blank lines or where something
+else starts; what follows is not counted as left out.
 
 The values are log text and can hold what a test compared. A value the screen
 judges not to be words, a number or a name is withheld as `<withheld>`, or, for
