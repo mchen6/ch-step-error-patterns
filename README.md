@@ -3,8 +3,7 @@
 countinghouse step module: the few lines that matter from a failed CI job: the exit line, errors, assertions, the first stack frames, or the failing step's tail.
 
 **Status: preview.** Runs on [countinghouse](https://github.com/mchen6/countinghouse)
-8.0 or later (unreleased; the release that carries the remote client and
-local mode). A step module of the countinghouse client packs: a `part`, loaded by a scenario and never listed to the model on its own.
+8.0 or later. A step module of the countinghouse client packs: a `part`, loaded by a scenario and never listed to the model on its own.
 
 Part of the countinghouse client packs. Each package has its own repository. The family's design and plan are in
 [ch-packs](https://github.com/mchen6/ch-packs) (public); the end-to-end acceptance test, which installs every package and calls the
@@ -24,7 +23,9 @@ are read when nothing comes before them), at two blank lines, at the first other
 line outside an open bracket that is neither a diff's nor a value's and is
 indented less than the assertion's own (or not at all, when that one isn't; a
 Rust panic's message is the exception), or where something else starts; what
-follows is not counted as left out.
+follows is not counted as left out. Node's comparison, the last line before an assertion's
+first stack frame (`1 !== 0`), is one of its values even when a long message
+ended them before it.
 
 The values are log text and can hold what a test compared. A value the screen
 judges not to be words, a number or a name is withheld as `<withheld>`, or, for
@@ -45,7 +46,7 @@ npm run validate   # packs the module and runs countinghouse-validate on the tar
 ```
 
 Pure JavaScript, no native module. Node 22.16 or later, as countinghouse. CI
-runs Node 24 on Linux, macOS and Windows.
+runs Node 24 on Linux, macOS and Windows, and Node 22.16, the floor, on Linux.
 
 ## Publishing
 
