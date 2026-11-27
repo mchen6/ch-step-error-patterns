@@ -23,7 +23,9 @@ are read when nothing comes before them), at two blank lines, at the first other
 line outside an open bracket that is neither a diff's nor a value's and is
 indented less than the assertion's own (or not at all, when that one isn't; a
 Rust panic's message is the exception), or where something else starts; what
-follows is not counted as left out.
+follows is not counted as left out. Node's comparison, the last line before an assertion's
+first stack frame (`1 !== 0`), is one of its values even when a long message
+ended them before it.
 
 The values are log text and can hold what a test compared. A value the screen
 judges not to be words, a number or a name is withheld as `<withheld>`, or, for
