@@ -91,3 +91,24 @@ test('no other format gains a line: jest, pytest, go, Rust, mocha without the sh
   };
   for (const [name, lines] of Object.entries(cases)) assert.deepStrictEqual(before(lines), expected[name], name);
 });
+
+test('(b) the search stops at the next node failure: one failure never takes another\'s comparison', () => {
+  const out = run(['  AssertionError [ERR_ASSERTION]: a', '  message of a', '', '', '  AssertionError [ERR_ASSERTION]: b', '  5 !== 6', '      at T (/w/t.js:2:2)']);
+  const blocks = out.details.blocks;
+  const of = (v) => blocks.find((b) => b.verdict === v);
+  assert.ok(!(of('  AssertionError [ERR_ASSERTION]: a') || {values: []}).values.includes('  5 !== 6'), JSON.stringify(blocks));
+});
+
+test('(b) past long message lines, the comparison is still shown: it comes first among the values', () => {
+  const longs = Array.from({length: 40}, (_, i) => `  {"jsonrpc":"2.0","id":${i},"result":{"content":[{"type":"text","text":"${'w'.repeat(120)}"}]}}`);
+  const out = run(['  AssertionError [ERR_ASSERTION]: FAIL a long one', ...longs, '', '  1 !== 0', '', '      at T (/w/t.js:1:1)']);
+  const block = out.details.blocks[0];
+  assert.strictEqual(block.values[0], '  1 !== 0', JSON.stringify(block.values.map((v) => v.slice(0, 30))));
+  assert.strictEqual(block.cut, true);
+});
+
+test('(a) only a file and line: a URL or host:port after FAIL keeps nothing more', () => {
+  for (const head of ['FAIL http://localhost:3000', 'FAIL 127.0.0.1:6379', 'FAIL localhost:8080']) {
+    assert.deepStrictEqual(kept([head, '  response dump line']).map(([t]) => t).filter((t) => t === '  response dump line'), [], head);
+  }
+});
