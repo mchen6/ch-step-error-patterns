@@ -1,29 +1,36 @@
 'use strict';
-// Two lines a failure prints after its verdict, kept among the error lines:
+// Two lines a failure prints after its verdict, no longer lost:
 // (a) a FAIL naming a file and line (`FAIL docs/x.md:339`): the lines
 //     indented under it, at most three, until a blank line, a line indented
-//     no deeper, or another verdict -- as a failed go test's details are;
-// (b) node's assertion: when the last line before the first stack frame
-//     (within 60 lines of the AssertionError) is its comparison
-//     (`1 !== 0`, `'a' != 'b'`), that line, which a long message pushes past
-//     the values a block can hold.
-// Kept as assert lines, ranked with their verdict, within max_lines; no
-// other format gains a line.
+//     no deeper, or another verdict, kept as error lines (its message);
+// (b) node's assertion (`AssertionError [ERR_ASSERTION]`): when the last line
+//     before its first stack frame (within 60 lines) is its comparison
+//     (`1 !== 0`, `'a' != 'b'`, at most 200 characters) and a long message
+//     ended the block before it, that line is one of the block's values all
+//     the same: screened as values are, never in `lines`, so never in the
+//     failure signature.
+// No other format gains a line.
 const test = require('node:test');
 const assert = require('node:assert');
 const {extractErrors} = require('../lib/patterns');
 
+const run = (lines, max = 40) => extractErrors([{name: 'Run tests', lines: [...lines, '##[error]Process completed with exit code 1.']}], max);
+const valuesOf = (out) => (out.details == null ? [] : out.details.blocks.flatMap((b) => b.values));
 const kept = (lines, max = 40) => extractErrors([{name: 'Run tests', lines: [...lines, '##[error]Process completed with exit code 1.']}], max).lines
   .filter((l) => l.kind !== 'exit' && l.kind !== 'tail').map((l) => [l.text, l.kind]);
 
 test('(a) a FAIL naming a file and line keeps the lines indented under it', () => {
   assert.deepStrictEqual(kept(['FAIL Article/PythonBasis/python13/2.md:339', '  timeout after 30s', '', 'FAIL Article/PythonBasis/python2/Type_of_data.md:442', '  File "/tmp/tmpjg271vyh.py", line 4', '    print(f\'{data[\'name\']}\')', '']), [
     ['FAIL Article/PythonBasis/python13/2.md:339', 'error'],
-    ['  timeout after 30s', 'assert'],
+    ['  timeout after 30s', 'error'],
     ['FAIL Article/PythonBasis/python2/Type_of_data.md:442', 'error'],
     ['  File "/tmp/tmpjg271vyh.py", line 4', 'stack'],
-    ['    print(f\'{data[\'name\']}\')', 'assert']
+    ['    print(f\'{data[\'name\']}\')', 'error']
   ]);
+});
+
+test('(a) the message starts no value block', () => {
+  assert.ok(run(['FAIL src/a.md:1', '  one', '  two', '  three', '  four']).details == null);
 });
 
 test('(a) at most three, stopping at a blank line, a line no deeper, or another verdict', () => {
@@ -33,33 +40,34 @@ test('(a) at most three, stopping at a blank line, a line no deeper, or another 
   assert.deepStrictEqual(kept(['  FAIL src/a.md:1', '  same depth']).map(([t]) => t), ['  FAIL src/a.md:1']);
 });
 
-test('(b) node\'s comparison, the last line before the first frame, is kept with its assertion', () => {
+test('(b) node\'s comparison, past a long message, is one of the assertion\'s values, never an error line', () => {
   const message = Array.from({length: 40}, (_, i) => `  diagnosis line ${i}: the daemon was running`);
-  assert.deepStrictEqual(kept(['✖ the shared runtime through the native shim (44394.95ms)', '  AssertionError [ERR_ASSERTION]: FAIL (b-latched) a loosening is refused as the latch', ...message, '', '  1 !== 0', '', '      at TestContext.<anonymous> (/home/runner/work/x/test/acceptance.test.js:452:10)']).filter(([, k]) => k === 'assert').map(([t]) => t),
-    ['  AssertionError [ERR_ASSERTION]: FAIL (b-latched) a loosening is refused as the latch', '  1 !== 0']);
-  // != for a loose equal, as far from its assertion
-  const loose = kept(['  AssertionError [ERR_ASSERTION]: \'a\' != \'b\'', ...message, '  \'a\' != \'b\'', '      at Object.<anonymous> (/w/test/b.js:3:8)']);
-  assert.ok(loose.some(([t, k]) => t === '  \'a\' != \'b\'' && k === 'assert'), JSON.stringify(loose));
+  const lines = ['✖ the shared runtime through the native shim (44394.95ms)', '  AssertionError [ERR_ASSERTION]: FAIL (b-latched) a loosening is refused as the latch', '      {"jsonrpc":"2.0","id":2,"result":{"isError":true}}', ...message, '', '  1 !== 0', '', '      at TestContext.<anonymous> (/home/runner/work/x/test/acceptance.test.js:452:10)'];
+  const out = run(lines);
+  assert.ok(valuesOf(out).includes('  1 !== 0'), JSON.stringify(out.details));
+  // (the failing step's tail may hold it, as any line, when few lines matched)
+  assert.ok(!out.lines.some((l) => l.text === '  1 !== 0' && l.kind !== 'tail'), 'not among the error lines, so not in the signature');
+  // != for a loose equal, the same way
+  const loose = run(['  AssertionError [ERR_ASSERTION]: \'a\' != \'b\'', ...message, '  \'a\' != \'b\'', '      at Object.<anonymous> (/w/test/b.js:3:8)']);
+  assert.ok(valuesOf(loose).includes('  \'a\' != \'b\''), JSON.stringify(loose.details));
 });
 
-test('(b) near its assertion (node\'s own generated form), the comparison is the values\' to show: no line added', () => {
+test('(b) node\'s own generated form, where the block reaches the comparison, is as before', () => {
   const near = ['  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:', '', '  1 !== 2', '', '      at TestContext.<anonymous> (/w/test/a.test.js:7:10)'];
-  assert.ok(!kept(near).some(([t]) => t === '  1 !== 2'), JSON.stringify(kept(near)));
-  // (twelve lines away is still the values' reach; thirteen is past it)
-  const at = (n) => kept(['  AssertionError [ERR_ASSERTION]: x', ...Array.from({length: n - 1}, (_, i) => `  m ${i}`), '  1 !== 0', '      at T (/w/t.js:1:1)']);
-  assert.ok(!at(12).some(([t]) => t === '  1 !== 0'), 'at 12');
-  assert.ok(at(13).some(([t, k]) => t === '  1 !== 0' && k === 'assert'), 'at 13');
+  const out = run(near);
+  assert.strictEqual(valuesOf(out).filter((v) => v === '  1 !== 2').length, 1, JSON.stringify(out.details));
+  assert.ok(!out.lines.some((l) => l.text === '  1 !== 2' && l.kind !== 'tail'));
 });
 
-test('(b) a frame more than 60 lines away, or no comparison before it, adds nothing', () => {
+test('(b) nothing is added past 60 lines, without the comparison\'s shape, over 200 characters, or for another runner\'s AssertionError', () => {
   const far = Array.from({length: 61}, (_, i) => `  line ${i}`);
-  const a = kept(['  AssertionError [ERR_ASSERTION]: long', ...far, '  1 !== 0', '      at T (/w/t.js:1:1)']);
-  assert.ok(!a.some(([t]) => t === '  1 !== 0'), JSON.stringify(a));
-  const b = kept(['  AssertionError [ERR_ASSERTION]: short', '  the end of the message', '      at T (/w/t.js:1:1)']);
-  assert.ok(!b.some(([t]) => t === '  the end of the message'), JSON.stringify(b));
-  // (over 200 characters: no comparison shape)
-  const c = kept(['  AssertionError [ERR_ASSERTION]: x', `  ${'a'.repeat(200)} !== 0`, '      at T (/w/t.js:1:1)']);
-  assert.ok(!c.some(([t]) => t.endsWith('!== 0')), JSON.stringify(c));
+  assert.ok(!valuesOf(run(['  AssertionError [ERR_ASSERTION]: long', ...far, '  1 !== 0', '      at T (/w/t.js:1:1)'])).includes('  1 !== 0'));
+  assert.ok(!valuesOf(run(['  AssertionError [ERR_ASSERTION]: short', ...far.slice(0, 20), '  the end of the message', '      at T (/w/t.js:1:1)'])).includes('  the end of the message'));
+  const long = `  ${'a'.repeat(200)} !== 0`;
+  assert.ok(!valuesOf(run(['  AssertionError [ERR_ASSERTION]: x', ...far.slice(0, 20), long, '      at T (/w/t.js:1:1)'])).some((v) => v.endsWith('!== 0')));
+  // (Python's AssertionError, then another traceback whose source line holds !=)
+  const py = run(['AssertionError: not equal', ...far.slice(0, 20), 'Traceback (most recent call last):', '    if a != b:', '  File "/w/t.py", line 3, in test_x']);
+  assert.ok(!valuesOf(py).includes('    if a != b:'), JSON.stringify(py.details));
 });
 
 test('no other format gains a line: jest, pytest, go, Rust, mocha without the shape, plain', () => {
