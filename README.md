@@ -39,8 +39,10 @@ arrow) as symbols. A token mixing letters outside Latin with digits, a run of
 letters from two scripts, a run of an alphabet longer than 24 letters or of
 Han, kana or Hangul longer than 32 characters, Braille, emoji and private-use
 characters are withheld; accented and fullwidth Latin letters are judged as
-the ASCII ones. A short value written in the letters of a script other than
-Latin may not be screened.
+the ASCII ones. The screen can't tell a value written in the letters of a
+script other than Latin from ordinary text: such a value of up to 64 characters
+(Chinese, Japanese, Korean and other scripts written without spaces) or 32
+letters (other alphabets) in a token may not be screened.
 
 This part does not redact; pass its output through ch-step-redact, as the pack
 does. The screen is a second layer, not a guarantee: a short secret, one written
