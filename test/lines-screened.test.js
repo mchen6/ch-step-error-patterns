@@ -157,3 +157,50 @@ test('a path under a home folder in another script keeps its readable parts: the
   assert.strictEqual(screenLine(t), t);
 });
 
+
+// (business's hardening, 11-28: what reads outside ASCII is bounded, as an
+// ASCII run is; every value drawn at run time from its block of code points)
+const from = (lo, hi, n) => Array.from({length: n}, () => String.fromCodePoint(lo + (crypto.randomBytes(2).readUInt16BE(0) % (hi - lo + 1)))).join('');
+const withheld = (line, part) => { const s = screenLine(line); return !s.includes(part) && s.includes(WITHHELD); };
+const kept = (line) => screenLine(line) === line;
+
+test('(a) Latin letters outside ASCII are folded and judged as ASCII words: a random run is withheld, an accented word reads', () => {
+  const ext = from(0x100, 0x17f, 26);
+  assert.ok(withheld(`token: ${ext}`, ext), 'Latin Extended-A, random');
+  const full = Array.from({length: 26}, () => from(0xff21, 0xff3a, 1) + from(0xff41, 0xff5a, 1)).join('').slice(0, 26);
+  const shownFull = screenLine(`token: ${full}`);
+  assert.ok(!shownFull.includes(full) && shownFull.includes(WITHHELD), 'fullwidth Latin, random');
+  assert.ok(kept('Error: café not found'));
+  assert.ok(kept('Error: ＴＥＳＴ failed'), 'a fullwidth word reads');
+});
+
+test('(b) never read as symbols: Braille, emoji, marks with no letter, private use; a test runner\'s marks still read', () => {
+  for (const [what, v] of [['Braille', from(0x2801, 0x28ff, 32)], ['emoji', from(0x1f600, 0x1f64f, 20)],
+    ['marks with no letter', from(0x300, 0x36f, 6)], ['private use', from(0xe000, 0xf8ff, 8)]]) {
+    const s = screenLine(`dump ${v}`);
+    assert.ok(!s.includes(v), `${what}: ${JSON.stringify(s)}`);
+  }
+  for (const mark of ['●', '✕', '✓', '×', '→', '✔', '✖']) assert.ok(kept(`  ${mark} adds two numbers`), mark);
+});
+
+test('(c) an alphabetic script\'s run reads up to 24 letters; 25 is withheld', () => {
+  assert.ok(kept(`Error: ${from(0x430, 0x44f, 24)}`), 'Cyrillic, 24');
+  const long = from(0x430, 0x44f, 25);
+  assert.ok(withheld(`Error: ${long}`, long), 'Cyrillic, 25');
+});
+
+test('(d) a Han, kana or Hangul run reads up to 32 characters; 33 is withheld; each split point splits it', () => {
+  assert.ok(kept(`Error: ${from(0x4e00, 0x9fff, 32)}`), 'Han, 32');
+  const han = from(0x4e00, 0x9fff, 33);
+  assert.ok(withheld(`Error: ${han}`, han), 'Han, 33');
+  assert.ok(kept(`Error: ${from(0xac00, 0xd7a3, 32)}`), 'Hangul, 32');
+  const hangul = from(0xac00, 0xd7a3, 33);
+  assert.ok(withheld(`Error: ${hangul}`, hangul), 'Hangul, 33');
+  // (40 in one run is withheld; split anywhere into two of 20, it reads)
+  const a = from(0x4e00, 0x9fff, 20);
+  const b = from(0x4e00, 0x9fff, 20);
+  assert.ok(withheld(`Error: ${a}${b}`, a + b), 'Han, 40 unsplit');
+  for (const sep of ['。', '、', '「', '」', '・', '，', '：', '；', '！', '？', '　', ' ', '.', '-', ';', '!', '?']) {
+    assert.ok(kept(`Error: ${a}${sep}${b}`), `split at U+${sep.codePointAt(0).toString(16)}`);
+  }
+});
