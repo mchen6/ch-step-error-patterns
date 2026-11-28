@@ -294,18 +294,62 @@ test('the token cap: an alphabet\'s letters up to 32 in a token, past it the res
 test('the token cap: Han, kana or Hangul up to 64 in a token, past it the rest withheld', () => {
   const p = from(0x4e00, 0x9fff, 32);
   const q = from(0x4e00, 0x9fff, 32);
-  assert.ok(kept(`Error: ${p}。${q}`), '64 in a token');
-  const r = [from(0x4e00, 0x9fff, 30), from(0x4e00, 0x9fff, 30), from(0x4e00, 0x9fff, 30)].join('。');
+  assert.ok(kept(`Error: ${p}\u3002${q}`), '64 in a token');
+  const r = [from(0x4e00, 0x9fff, 30), from(0x4e00, 0x9fff, 30), from(0x4e00, 0x9fff, 30)].join('\u3002');
   assert.strictEqual(screenLine(`Error: ${r}`), `Error: ${r.slice(0, 66)}${WITHHELD}`, 'the 65th on withheld');
 });
 
 test('short digit groups inside a Han run read, counted toward its 32; longer groups are withheld', () => {
   // (business's examples: "the 3rd test failed", "expected 3, got 2", "line 12")
-  for (const t of ['第3个测试失败', '期望3个，实际2个', '第12行']) assert.ok(kept(`Error: ${t}`), t);
-  assert.ok(kept('Error: 第123456行'), 'six digits');
-  assert.ok(!kept('Error: 第1234567行'), 'seven');
+  for (const t of ['\u7b2c3\u4e2a\u6d4b\u8bd5\u5931\u8d25', '\u671f\u671b3\u4e2a\uff0c\u5b9e\u96452\u4e2a', '\u7b2c12\u884c']) assert.ok(kept(`Error: ${t}`), t);
+  assert.ok(kept('Error: \u7b2c123456\u884c'), 'six digits');
+  assert.ok(!kept('Error: \u7b2c1234567\u884c'), 'seven');
   const head = from(0x4e00, 0x9fff, 20);
-  assert.ok(kept(`Error: ${head}12345行`), '26 with its digits');
+  assert.ok(kept(`Error: ${head}12345\u884c`), '26 with its digits');
   const longer = from(0x4e00, 0x9fff, 28);
-  assert.ok(!kept(`Error: ${longer}12345行`), '34 with its digits');
+  assert.ok(!kept(`Error: ${longer}12345\u884c`), '34 with its digits');
+});
+
+// (the third medium on the draft, its probes made tests: every value drawn at
+// run time)
+test('a microsecond duration reads only with a plain number: a long digit run before it is withheld', () => {
+  const long = Array.from({length: 30}, () => crypto.randomBytes(1)[0] % 10).join('');
+  assert.ok(!kept(`took ${long}\u00b5s`), 'micro');
+  assert.ok(!kept(`took ${long}\u03bcs`), 'mu');
+});
+
+test('symbols are capped per token too: short runs repeated within one token are withheld past 4', () => {
+  const MARKS = ['\u2190', '\u2191', '\u2192', '\u2193', '\u2022', '\u25c6', '\u25c7', '\u25a0', '\u25a1'];
+  const token = Array.from({length: 10}, () => fromSet(MARKS, 4)).join('.');
+  assert.ok(!kept(`x ${token}`), JSON.stringify(screenLine(`x ${token}`)));
+});
+
+test('marks on Han, kana or Hangul never read; an alphabet\'s letter carries at most one', () => {
+  const han = Array.from({length: 10}, () => from(0x4e00, 0x9fff, 1) + from(0x300, 0x36f, 1)).join('');
+  assert.ok(!kept(`x ${han}`), 'a mark on each Han');
+  const greek = Array.from({length: 10}, () => from(0x3b1, 0x3c9, 1) + from(0x300, 0x36f, 2)).join('');
+  assert.ok(!kept(`x ${greek}`), 'two marks on each Greek letter');
+});
+
+test('halfwidth sound marks count toward the token cap', () => {
+  const token = Array.from({length: 10}, () => fromSet(['\uff9e', '\uff9f'], 30)).join('.');
+  assert.ok(!kept(`x ${token}`), 'a long run of halfwidth sound marks');
+});
+
+test('digits before a Han run count toward its 32 and the token\'s 64', () => {
+  const digits = Array.from({length: 6}, () => crypto.randomBytes(1)[0] % 10).join('');
+  assert.ok(!kept(`Error: ${digits}${from(0x4e00, 0x9fff, 32)}`), '6 digits then 32 Han: 38 in the run');
+  assert.ok(kept(`Error: 3${from(0x4e00, 0x9fff, 20)}`), 'a short count before a short run reads');
+});
+
+test('a ZWNJ beside a tatweel or a vowel mark in Arabic is no unreadable character', () => {
+  for (const t of ['\u0645\u0640\u200c\u0634\u0648\u062f', '\u0645\u064e\u200c\u0634\u0648\u062f']) assert.ok(kept(`Error: ${t}`), JSON.stringify(t));
+});
+
+test('a decomposed line that fits once composed is whole: not cut, its place kept', () => {
+  const v = value();
+  const words = `${'cafe\u0301 '.repeat(90)}`.trimEnd();
+  const out = run([`AssertionError: '${v}' == 'x'`, `+ ${words}`, `- 'x'`]);
+  const b = out.details == null ? null : out.details.blocks[0];
+  assert.ok(b != null && b.cut === false, JSON.stringify(b && {cut: b.cut, places: b.places}));
 });
