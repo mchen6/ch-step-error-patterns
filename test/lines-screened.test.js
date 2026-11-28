@@ -277,3 +277,35 @@ test('a path\'s spans after the fold land on the right characters (a ligature an
   assert.ok(!s.includes(seg.slice(-2)), s);
   assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s), 'no half of a pair');
 });
+
+// (business, 11-28: a token's letters outside ASCII are capped in total, so
+// pieces joined by punctuation can't lift the per-run bounds; past the cap,
+// the rest of the token goes, its readable start kept)
+test('the token cap: an alphabet\'s letters up to 32 in a token, past it the rest withheld', () => {
+  const a = from(0x430, 0x44f, 16);
+  const b = from(0x430, 0x44f, 16);
+  assert.ok(kept(`Error: ${a}-${b}`), '32 in a token');
+  const c = from(0x430, 0x44f, 20);
+  const d = from(0x430, 0x44f, 20);
+  const token = `${c}-${d}`;
+  assert.strictEqual(screenLine(`Error: ${token}`), `Error: ${token.slice(0, 33)}${WITHHELD}`, 'the 33rd letter on withheld');
+});
+
+test('the token cap: Han, kana or Hangul up to 64 in a token, past it the rest withheld', () => {
+  const p = from(0x4e00, 0x9fff, 32);
+  const q = from(0x4e00, 0x9fff, 32);
+  assert.ok(kept(`Error: ${p}。${q}`), '64 in a token');
+  const r = [from(0x4e00, 0x9fff, 30), from(0x4e00, 0x9fff, 30), from(0x4e00, 0x9fff, 30)].join('。');
+  assert.strictEqual(screenLine(`Error: ${r}`), `Error: ${r.slice(0, 66)}${WITHHELD}`, 'the 65th on withheld');
+});
+
+test('short digit groups inside a Han run read, counted toward its 32; longer groups are withheld', () => {
+  // (business's examples: "the 3rd test failed", "expected 3, got 2", "line 12")
+  for (const t of ['第3个测试失败', '期望3个，实际2个', '第12行']) assert.ok(kept(`Error: ${t}`), t);
+  assert.ok(kept('Error: 第123456行'), 'six digits');
+  assert.ok(!kept('Error: 第1234567行'), 'seven');
+  const head = from(0x4e00, 0x9fff, 20);
+  assert.ok(kept(`Error: ${head}12345行`), '26 with its digits');
+  const longer = from(0x4e00, 0x9fff, 28);
+  assert.ok(!kept(`Error: ${longer}12345行`), '34 with its digits');
+});
