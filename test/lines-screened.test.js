@@ -170,8 +170,8 @@ test('(a) Latin letters outside ASCII are folded and judged as ASCII words: a ra
   const full = Array.from({length: 26}, () => from(0xff21, 0xff3a, 1) + from(0xff41, 0xff5a, 1)).join('').slice(0, 26);
   const shownFull = screenLine(`token: ${full}`);
   assert.ok(!shownFull.includes(full) && shownFull.includes(WITHHELD), 'fullwidth Latin, random');
-  assert.ok(kept('Error: café not found'));
-  assert.ok(kept('Error: ＴＥＳＴ failed'), 'a fullwidth word reads');
+  assert.ok(kept('Error: caf\u00e9 not found'));
+  assert.ok(kept('Error: \uff34\uff25\uff33\uff34 failed'), 'a fullwidth word reads');
 });
 
 test('(b) never read as symbols: Braille, emoji, marks with no letter, private use; a test runner\'s marks still read', () => {
@@ -180,7 +180,7 @@ test('(b) never read as symbols: Braille, emoji, marks with no letter, private u
     const s = screenLine(`dump ${v}`);
     assert.ok(!s.includes(v), `${what}: ${JSON.stringify(s)}`);
   }
-  for (const mark of ['●', '✕', '✓', '×', '→', '✔', '✖']) assert.ok(kept(`  ${mark} adds two numbers`), mark);
+  for (const mark of ['\u25cf', '\u2715', '\u2713', '\u00d7', '\u2192', '\u2714', '\u2716']) assert.ok(kept(`  ${mark} adds two numbers`), mark);
 });
 
 test('(c) an alphabetic script\'s run reads up to 24 letters; 25 is withheld', () => {
@@ -200,7 +200,7 @@ test('(d) a Han, kana or Hangul run reads up to 32 characters; 33 is withheld; e
   const a = from(0x4e00, 0x9fff, 20);
   const b = from(0x4e00, 0x9fff, 20);
   assert.ok(withheld(`Error: ${a}${b}`, a + b), 'Han, 40 unsplit');
-  for (const sep of ['。', '、', '「', '」', '・', '，', '：', '；', '！', '？', '　', ' ', '.', '-', ';', '!', '?']) {
+  for (const sep of ['\u3002', '\u3001', '\u300c', '\u300d', '\u30fb', '\uff0c', '\uff1a', '\uff1b', '\uff01', '\uff1f', '\u3000', ' ', '.', '-', ';', '!', '?']) {
     assert.ok(kept(`Error: ${a}${sep}${b}`), `split at U+${sep.codePointAt(0).toString(16)}`);
   }
 });
@@ -214,5 +214,66 @@ test('a withheld mark the bound would split is kept whole', () => {
   const v = Array.from({length: 20}, () => pick('abcdefghjkmnpqrstuvwxyz', 1) + pick('23456789', 1)).join('');
   const out = run([`Error: ${'word '.repeat(97)}${v}`]);
   const t = out.lines[0].text;
-  assert.ok(t.length <= 500 && t.endsWith(`${WITHHELD}…`) && !t.includes(v), t.slice(-40));
+  assert.ok(t.length <= 500 && t.endsWith(`${WITHHELD}\u2026`) && !t.includes(v), t.slice(-40));
+});
+
+// (the second medium on the draft, its probes made tests: every value drawn
+// at run time)
+const fromSet = (chars, n) => Array.from({length: n}, () => chars[crypto.randomBytes(1)[0] % chars.length]).join('');
+
+test('Latin letters NFKD cannot fold are bounded too; a word with them reads', () => {
+  const ipa = from(0x250, 0x2af, 40);
+  assert.ok(withheld(`token: ${ipa}`, ipa), 'IPA, random');
+  const odd = fromSet(['\u00f8', '\u00df', '\u00e6', '\u0153', '\u00f0', '\u00fe', '\u0142', '\u0111', '\u0127', '\u0131', '\u014b'], 60);
+  assert.ok(withheld(`token: ${odd}`, odd), 'unfoldable Latin letters, random');
+  const marks = `\u00f8${from(0x300, 0x36f, 20)}`;
+  assert.ok(!screenLine(`token: ${marks}`).includes(marks), 'marks piled on a letter');
+  for (const w of ['Stra\u00dfe', '\u0141\u00f3d\u017a', 'K\u00f8benhavn']) assert.ok(kept(`Error: ${w} not found`), w);
+});
+
+test('a run of symbols reads up to 4 marks; regional indicators never', () => {
+  for (const [what, v] of [['box drawing', from(0x2500, 0x257f, 60)], ['hexagrams', from(0x4dc0, 0x4dff, 60)],
+    ['math operators', from(0x2200, 0x22ff, 60)], ['regional indicators', from(0x1f1e6, 0x1f1ff, 6)]]) {
+    assert.ok(!screenLine(`dump ${v}`).includes(v), what);
+  }
+  assert.ok(kept('a \u2192\u2192\u2192\u2192 b'), 'four arrows');
+  assert.ok(!kept('a \u2192\u2192\u2192\u2192\u2192 b'), 'five');
+});
+
+test('accents written decomposed (NFD) read as the composed ones do', () => {
+  const t = 'Expected: cafe\u0301 re\u0301sume\u0301';
+  assert.strictEqual(screenLine(t), t.normalize('NFC'));
+});
+
+test('more scripts read: Tamil, Telugu, a Thai sentence, Arabic with a tatweel, Persian with a ZWNJ, halfwidth katakana with a voiced mark', () => {
+  for (const t of ['\u0baa\u0bbf\u0bb4\u0bc8', '\u0c24\u0c2a\u0c4d\u0c2a\u0c41',
+    '\u0e01\u0e32\u0e23\u0e17\u0e14\u0e2a\u0e2d\u0e1a\u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27',
+    '\u062e\u0640\u0637\u0623', '\u0645\u06cc\u200c\u0634\u0648\u062f', '\uff83\uff9e\uff70\uff80']) {
+    assert.ok(kept(`Error: ${t}`), JSON.stringify(t));
+  }
+  // (any other zero-width character still withholds the line)
+  assert.strictEqual(screenLine('Error: a\u200bb'), LINE_WITHHELD);
+});
+
+test('a test runner\'s text marks read: node --test\'s summary, a warning, a timer', () => {
+  for (const m of ['\u2139', '\u26a0', '\u23f1']) assert.ok(kept(`${m} tests 5`), m);
+});
+
+test('a duration in microseconds reads, written with either mu', () => {
+  for (const t of ['took 12\u00b5s', 'took 12\u03bcs', 'took 3.5\u00b5s']) assert.ok(kept(t), t);
+});
+
+test('the bounds count letters: a 12-syllable Hangul word written decomposed reads', () => {
+  const word = from(0xac00, 0xd7a3, 12);
+  const nfd = `Error: ${word.normalize('NFD')}`;
+  assert.strictEqual(screenLine(nfd), nfd.normalize('NFC'));
+});
+
+test('a path\'s spans after the fold land on the right characters (a ligature and an astral Latin letter)', () => {
+  const CONSONANTS = 'bcdfghjklmnpqrstvwxz';
+  const seg = `${pick(CONSONANTS, 3)}-${pick(CONSONANTS, 3)}`;
+  const t = `x: /a/\ufb00${seg}/\u{10781}x`;
+  const s = screenLine(t);
+  assert.ok(!s.includes(seg.slice(-2)), s);
+  assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s), 'no half of a pair');
 });
