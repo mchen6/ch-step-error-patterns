@@ -34,6 +34,10 @@ step's kept lines are judged together, in log order, and a value withheld there
 reaches the failure signature as `<withheld>` (`rules` 6, so a cache keyed on the
 rules is rebuilt).
 
+Words in any script read as words, and symbols (a test runner's `●`, `✕`, an
+arrow) as symbols. A token mixing letters outside ASCII with digits, or a run
+of letters from two scripts, is withheld.
+
 This part does not redact; pass its output through ch-step-redact, as the pack
 does. The screen is a second layer, not a guarantee: a short secret, one written
 in groups, or one that reads like ordinary words or a plain number can still

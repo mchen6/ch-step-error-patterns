@@ -115,13 +115,19 @@ test('a token mixing letters and digits in a script other than ASCII is withheld
   assert.ok(shown.includes(WITHHELD), shown);
 });
 
-// (a path segment that looks generated used to be withheld alone, so a
-// character outside ASCII elsewhere in the same path passed: both go now)
+// (a path segment that looks generated used to be withheld alone, and the
+// screen stopped there, so what another segment held passed unjudged: here,
+// letters of two scripts in one run, in a token too short for the screen of
+// long runs to see)
 test('in a path, a segment that looks generated does not stop the screen of the other segments', () => {
-  // (two runs of consonants a segment holds, made at run time)
+  // (two runs of three consonants, no word of code, and a Cyrillic letter
+  // with a Greek one, made at run time)
   const CONSONANTS = 'bcdfghjklmnpqrstvwxz';
-  const seg = `${pick(CONSONANTS, 4)}-${pick(CONSONANTS, 4)}`;
-  const shown = screenLine(`x: ${seg}/café`);
+  const CODE = new Set(['css', 'sql', 'tcp', 'udp', 'tls', 'ssl', 'ssh', 'dns', 'src', 'cmd', 'ctx', 'msg', 'pkg', 'tmp', 'cfg', 'std', 'xml']);
+  const three = () => { for (;;) { const t = pick(CONSONANTS, 3); if (!CODE.has(t)) return t; } };
+  const seg = `${three()}-${three()}`;
+  const mixed = pick(CYRILLIC, 1) + pick('αβγδεζηθ', 1);
+  const shown = screenLine(`x: ${seg}/${mixed}`);
   assert.ok(!shown.includes(seg), shown);
-  assert.ok(!shown.includes('é'), `the accented letter withheld too: ${shown}`);
+  assert.ok(!shown.includes(mixed), `the other segment withheld too: ${shown}`);
 });

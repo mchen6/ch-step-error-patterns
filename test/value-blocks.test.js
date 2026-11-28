@@ -204,9 +204,13 @@ test('quotes pair up: JSON keys and sentences stay readable, and a value after a
   }
 });
 
-test('text it cannot judge is withheld: another script, a value cut at the line\'s end', () => {
-  const other = `+ '${String.fromCharCode(0x416, 0x431, 0x433)}'`;
-  assert.ok(screenLine(other).includes(WITHHELD), screenLine(other));
+// (business, 11-28: a word of one script reads as a word; letters of two
+// scripts in one run, or with a digit, don't)
+test('text it cannot judge is withheld: letters of two scripts in one run, a value cut at the line\'s end', () => {
+  const word = `+ '${String.fromCharCode(0x416, 0x431, 0x433)}'`;
+  assert.strictEqual(screenLine(word), word, 'one script\'s letters read');
+  const two = `+ '${String.fromCharCode(0x416, 0x3b1, 0x431, 0x3b2)}'`;
+  assert.ok(screenLine(two).includes(WITHHELD), screenLine(two));
   const cut = screenLine('+ some words and then partOfAVal\u2026');
   assert.ok(cut.includes(WITHHELD) && !cut.includes('partOfAVal'), cut);
   assert.ok(cut.includes('some words'), cut);
