@@ -204,3 +204,15 @@ test('(d) a Han, kana or Hangul run reads up to 32 characters; 33 is withheld; e
     assert.ok(kept(`Error: ${a}${sep}${b}`), `split at U+${sep.codePointAt(0).toString(16)}`);
   }
 });
+
+// (the medium on the draft: a re-cut that would split a withheld mark keeps
+// the mark whole, cutting the words before it shorter, so the line still says
+// a value was withheld)
+test('a withheld mark the bound would split is kept whole', () => {
+  // (letters and digits alternating, drawn at run time: a stretch the cut is
+  // in always reads as a value, so the mark always lands across the bound)
+  const v = Array.from({length: 20}, () => pick('abcdefghjkmnpqrstuvwxyz', 1) + pick('23456789', 1)).join('');
+  const out = run([`Error: ${'word '.repeat(97)}${v}`]);
+  const t = out.lines[0].text;
+  assert.ok(t.length <= 500 && t.endsWith(`${WITHHELD}…`) && !t.includes(v), t.slice(-40));
+});

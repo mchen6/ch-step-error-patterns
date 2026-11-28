@@ -35,8 +35,12 @@ reaches the failure signature as `<withheld>` (`rules` 6, so a cache keyed on th
 rules is rebuilt).
 
 Words in any script read as words, and symbols (a test runner's `●`, `✕`, an
-arrow) as symbols. A token mixing letters outside ASCII with digits, or a run
-of letters from two scripts, is withheld.
+arrow) as symbols. A token mixing letters outside Latin with digits, a run of
+letters from two scripts, a run of an alphabet longer than 24 letters or of
+Han, kana or Hangul longer than 32 characters, Braille, emoji and private-use
+characters are withheld; accented and fullwidth Latin letters are judged as
+the ASCII ones. A short value written in the letters of a script other than
+Latin may not be screened.
 
 This part does not redact; pass its output through ch-step-redact, as the pack
 does. The screen is a second layer, not a guarantee: a short secret, one written

@@ -1,8 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const {screenBlock} = require('../lib/values');
-const {extractErrors} = require('../lib/patterns');
+const {extractErrors, cutLine} = require('../lib/patterns');
 const {CountinghouseError} = require('countinghouse/lib/countinghouse-error');
 // the handler as the runtime calls it: (input, ctx), ctx.error the runtime's
 const ctx = {error: (code, message, details) => CountinghouseError.module(code, message, details)};
@@ -279,7 +278,10 @@ test('JSON embedded in a picked line is cut to 200 characters', () => {
   const out = extractErrors([{name: 'Run x', lines: [line]}], 40);
   const text = nonTail(out)[0].text;
   const at = line.indexOf('{');
-  assert.strictEqual(text, screenBlock([`${line.slice(0, at + 200)}…`])[0], 'a plain …: no count of what was cut, which would change the signature');
+  // (the readable start kept up to near the cut, and a plain …: no count of
+  // what was cut, which would change the signature)
+  assert.ok(text.startsWith(line.slice(0, at + 180)), text);
+  assert.ok(text.endsWith('…') && text.length <= at + 201 + 10, text);
   const short = 'Error: got {"a":1} instead';
   assert.strictEqual(extractErrors([{name: 'Run x', lines: [short]}], 40).lines[0].text, short, 'a short one is kept whole');
 });
@@ -404,10 +406,11 @@ test('mocha pairing needs deeper indentation and an error name: other numbered l
 });
 
 test('a cut never splits a surrogate pair', () => {
-  const line = `Error: ${'word '.repeat(98)}w\u{1F600}${'b'.repeat(10)}`;
+  // (the cut itself, as the screen withholds the stretch a cut is in)
+  const line = `Error: ${'a'.repeat(491)}\u{1F600}${'b'.repeat(10)}`;
+  assert.strictEqual(cutLine(line), `Error: ${'a'.repeat(491)}…`);
   const text = extractErrors([{name: 'Run x', lines: [line]}], 40).lines[0].text;
-  assert.ok(text.length <= 500 && text.startsWith(`Error: ${'word '.repeat(90)}`) && text.endsWith('…'), text);
-  assert.ok(!/[\uD800-\uDFFF]/.test(text), 'no half of a pair');
+  assert.ok(text.length <= 500 && !/[\uD800-\uDFFF]/.test(text), 'no half of a pair');
 });
 
 // The reviewer's re-review of #1 (2026-11-13).
