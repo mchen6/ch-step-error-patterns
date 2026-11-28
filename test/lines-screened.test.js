@@ -93,18 +93,18 @@ test('the rules name this version: 6', () => {
 // script other than ASCII is withheld)
 const {screenLine} = require('../lib/values');
 const pick = (alphabet, n) => [...crypto.randomBytes(n)].map((b) => alphabet[b % alphabet.length]).join('');
-const CYRILLIC = 'абвгдежзийклмнопрстуфхцчшщэюяАБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЭЮЯ';
+const CYRILLIC = '\u0430\u0431\u0432\u0433\u0434\u0435\u0436\u0437\u0438\u0439\u043a\u043b\u043c\u043d\u043e\u043f\u0440\u0441\u0442\u0443\u0444\u0445\u0446\u0447\u0448\u0449\u044d\u044e\u044f\u0410\u0411\u0412\u0413\u0414\u0415\u0416\u0417\u0418\u041a\u041b\u041c\u041d\u041e\u041f\u0420\u0421\u0422\u0423\u0424\u0425\u0426\u0427\u0428\u042d\u042e\u042f';
 
 test('a run of one script\'s letters reads as words: Cyrillic, Chinese, Japanese (kana and kanji together)', () => {
-  for (const words of ['Ошибка подключения к базе', '测试失败', 'テストが失敗しました', 'Δοκιμή απέτυχε']) {
+  for (const words of ['\u041e\u0448\u0438\u0431\u043a\u0430 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u044f \u043a \u0431\u0430\u0437\u0435', '\u6d4b\u8bd5\u5931\u8d25', '\u30c6\u30b9\u30c8\u304c\u5931\u6557\u3057\u307e\u3057\u305f', '\u0394\u03bf\u03ba\u03b9\u03bc\u03ae \u03b1\u03c0\u03ad\u03c4\u03c5\u03c7\u03b5']) {
     assert.strictEqual(screenLine(`Error: ${words}`), `Error: ${words}`, words);
   }
-  const out = run(['Error: Ошибка подключения к базе']);
-  assert.ok(out.lines.some((l) => l.text === 'Error: Ошибка подключения к базе'), JSON.stringify(out.lines));
+  const out = run(['Error: \u041e\u0448\u0438\u0431\u043a\u0430 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u044f \u043a \u0431\u0430\u0437\u0435']);
+  assert.ok(out.lines.some((l) => l.text === 'Error: \u041e\u0448\u0438\u0431\u043a\u0430 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u044f \u043a \u0431\u0430\u0437\u0435'), JSON.stringify(out.lines));
 });
 
 test('a symbol-only token reads: a test runner\'s marks', () => {
-  for (const mark of ['●', '✕', '✓', '×', '→']) assert.strictEqual(screenLine(`  ${mark} adds two numbers`), `  ${mark} adds two numbers`, mark);
+  for (const mark of ['\u25cf', '\u2715', '\u2713', '\u00d7', '\u2192']) assert.strictEqual(screenLine(`  ${mark} adds two numbers`), `  ${mark} adds two numbers`, mark);
 });
 
 test('a token mixing letters and digits in a script other than ASCII is withheld', () => {
@@ -126,8 +126,34 @@ test('in a path, a segment that looks generated does not stop the screen of the 
   const CODE = new Set(['css', 'sql', 'tcp', 'udp', 'tls', 'ssl', 'ssh', 'dns', 'src', 'cmd', 'ctx', 'msg', 'pkg', 'tmp', 'cfg', 'std', 'xml']);
   const three = () => { for (;;) { const t = pick(CONSONANTS, 3); if (!CODE.has(t)) return t; } };
   const seg = `${three()}-${three()}`;
-  const mixed = pick(CYRILLIC, 1) + pick('αβγδεζηθ', 1);
+  const mixed = pick(CYRILLIC, 1) + pick('\u03b1\u03b2\u03b3\u03b4\u03b5\u03b6\u03b7\u03b8', 1);
   const shown = screenLine(`x: ${seg}/${mixed}`);
   assert.ok(!shown.includes(seg), shown);
   assert.ok(!shown.includes(mixed), `the other segment withheld too: ${shown}`);
 });
+
+// (the medium on the draft) a kept line is judged with the lines next to it
+// in the log, never with one far away: a readable line beside 47 lines left
+// out is not withheld for a value before them
+test('kept lines far apart in the log are screened apart', () => {
+  const v = value();
+  const lines = ['FAIL src/a.md:12', `  ${v}`, ...Array.from({length: 47}, (_, i) => `progress ${i}`), '  pqrs', ...Array.from({length: 14}, (_, i) => `more ${i}`)];
+  const out = run(lines);
+  const far = out.lines.find((l) => l.index === 49);
+  if (far != null) assert.strictEqual(far.text, '  pqrs', JSON.stringify(out.lines.map((l) => [l.index, l.text])));
+  assert.ok(!out.lines.some((l) => l.text.includes(v)));
+});
+
+test('punctuation outside ASCII does not break a word\'s reading: a Japanese sentence\'s full stop, guillemets, corner brackets', () => {
+  for (const t of ['Error: \u30c6\u30b9\u30c8\u304c\u5931\u6557\u3057\u307e\u3057\u305f\u3002',
+    'Error: \u00ab\u041e\u0448\u0438\u0431\u043a\u0430\u00bb',
+    '\u300c\u30c6\u30b9\u30c8\u300d failed']) {
+    assert.strictEqual(screenLine(t), t, t);
+  }
+});
+
+test('a path under a home folder in another script keeps its readable parts: the letters-with-digits rule is a segment\'s', () => {
+  const t = 'at /home/\u0438\u0432\u0430\u043d/proj/test1.js:5';
+  assert.strictEqual(screenLine(t), t);
+});
+
