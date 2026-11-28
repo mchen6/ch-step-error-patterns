@@ -1,0 +1,355 @@
+'use strict';
+// The lines that reach `lines` pass the same screen as `details` (lib/values.js):
+// a value that doesn't read as words, a number or a name is withheld there too,
+// so a fixture token a test compared doesn't reach the model through a verdict,
+// a Rust panic's left:/right:, or the failing step's tail. Readable lines are
+// unchanged. Every value here is made at run time: random letters and digits,
+// no known secret's shape, never a literal in this file.
+const test = require('node:test');
+const assert = require('node:assert');
+const crypto = require('node:crypto');
+const {extractErrors, RULES} = require('../lib/patterns');
+const {WITHHELD, LINE_WITHHELD} = require('../lib/values');
+
+const ALNUM = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+// (26 characters, letters and digits mixed, drawn at random each run)
+const value = () => {
+  for (;;) {
+    const v = [...crypto.randomBytes(26)].map((b) => ALNUM[b % ALNUM.length]).join('');
+    if (/[0-9]/.test(v) && /[A-Z]/.test(v) && /[a-z]/.test(v)) return v;
+  }
+};
+const run = (lines) => extractErrors([{name: 'test', lines}], 40, null);
+const textOf = (out, re) => out.lines.find((l) => re.test(l.text));
+
+test('a Rust panic\'s left: and right: values are withheld in lines', () => {
+  const v = value();
+  const w = value();
+  const out = run([
+    'running 1 test',
+    "thread 'tests::reads_value' panicked at src/lib.rs:10:5:",
+    'assertion `left == right` failed',
+    `  left: "${v}"`,
+    ` right: "${w}"`,
+    'test tests::reads_value ... FAILED',
+    'error: test failed, to rerun pass --lib'
+  ]);
+  const all = out.lines.map((l) => l.text).join('\n');
+  assert.ok(!all.includes(v) && !all.includes(w), all);
+  assert.match(textOf(out, /left:/).text, new RegExp(`left: "${WITHHELD}"`));
+  assert.match(textOf(out, /right:/).text, new RegExp(`right: "${WITHHELD}"`));
+});
+
+test('a Node assertion verdict carrying the compared value has it withheld in lines', () => {
+  const v = value();
+  const out = run([
+    '# Subtest: reads the token',
+    `AssertionError [ERR_ASSERTION]: Expected values to be strictly equal: + actual - expected + '${v}' - 'ok'`,
+    '    at TestContext.<anonymous> (/repo/test/a.test.js:5:10)',
+    'not ok 1 - reads the token'
+  ]);
+  const verdict = textOf(out, /AssertionError/);
+  assert.ok(verdict != null, JSON.stringify(out.lines));
+  assert.ok(!verdict.text.includes(v), verdict.text);
+  assert.ok(verdict.text.includes(WITHHELD), verdict.text);
+});
+
+test('a value in the failing step\'s tail is withheld in lines', () => {
+  const v = value();
+  const out = run([
+    'npm ERR! code ELIFECYCLE',
+    `Error: request rejected for session ${v}`,
+    'npm ERR! Test failed.  See above for more details.'
+  ]);
+  const all = out.lines.map((l) => l.text).join('\n');
+  assert.ok(out.lines.length > 0, 'the tail is kept');
+  assert.ok(!all.includes(v), all);
+});
+
+test('readable lines are unchanged: words, paths with line numbers, a test name, a plain number', () => {
+  const lines = [
+    "thread 'tests::reads_value' panicked at src/lib.rs:10:5:",
+    'assertion `left == right` failed',
+    '  left: 3',
+    ' right: 4',
+    'test tests::reads_value ... FAILED',
+    'error: test failed, to rerun pass --lib'
+  ];
+  const out = run(['running 1 test', ...lines]);
+  const kept = out.lines.map((l) => l.text);
+  for (const t of kept) assert.ok(lines.includes(t), `changed: ${t}`);
+  assert.ok(!kept.some((t) => t.includes(WITHHELD) || t === LINE_WITHHELD), kept.join('\n'));
+});
+
+// (the failure signature is made from these lines: a cache keyed on the rules
+// is rebuilt)
+test('the rules name this version: 6', () => {
+  assert.strictEqual(RULES, 6);
+  assert.strictEqual(run(['Error: boom']).rules, 6);
+});
+
+// (business's choice, 11-28, for lines and details alike: words in any script
+// read as words, symbols are kept, and a token mixing letters and digits in a
+// script other than ASCII is withheld)
+const {screenLine} = require('../lib/values');
+const pick = (alphabet, n) => [...crypto.randomBytes(n)].map((b) => alphabet[b % alphabet.length]).join('');
+const CYRILLIC = '\u0430\u0431\u0432\u0433\u0434\u0435\u0436\u0437\u0438\u0439\u043a\u043b\u043c\u043d\u043e\u043f\u0440\u0441\u0442\u0443\u0444\u0445\u0446\u0447\u0448\u0449\u044d\u044e\u044f\u0410\u0411\u0412\u0413\u0414\u0415\u0416\u0417\u0418\u041a\u041b\u041c\u041d\u041e\u041f\u0420\u0421\u0422\u0423\u0424\u0425\u0426\u0427\u0428\u042d\u042e\u042f';
+
+test('a run of one script\'s letters reads as words: Cyrillic, Chinese, Japanese (kana and kanji together)', () => {
+  for (const words of ['\u041e\u0448\u0438\u0431\u043a\u0430 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u044f \u043a \u0431\u0430\u0437\u0435', '\u6d4b\u8bd5\u5931\u8d25', '\u30c6\u30b9\u30c8\u304c\u5931\u6557\u3057\u307e\u3057\u305f', '\u0394\u03bf\u03ba\u03b9\u03bc\u03ae \u03b1\u03c0\u03ad\u03c4\u03c5\u03c7\u03b5']) {
+    assert.strictEqual(screenLine(`Error: ${words}`), `Error: ${words}`, words);
+  }
+  const out = run(['Error: \u041e\u0448\u0438\u0431\u043a\u0430 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u044f \u043a \u0431\u0430\u0437\u0435']);
+  assert.ok(out.lines.some((l) => l.text === 'Error: \u041e\u0448\u0438\u0431\u043a\u0430 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u044f \u043a \u0431\u0430\u0437\u0435'), JSON.stringify(out.lines));
+});
+
+test('a symbol-only token reads: a test runner\'s marks', () => {
+  for (const mark of ['\u25cf', '\u2715', '\u2713', '\u00d7', '\u2192']) assert.strictEqual(screenLine(`  ${mark} adds two numbers`), `  ${mark} adds two numbers`, mark);
+});
+
+test('a token mixing letters and digits in a script other than ASCII is withheld', () => {
+  // (made at run time: Cyrillic letters and digits, interleaved)
+  const t = [...pick(CYRILLIC, 8)].map((c, i) => c + String(i % 10)).join('');
+  const shown = screenLine(`Error: session ${t} rejected`);
+  assert.ok(!shown.includes(t), shown);
+  assert.ok(shown.includes(WITHHELD), shown);
+});
+
+// (a path segment that looks generated used to be withheld alone, and the
+// screen stopped there, so what another segment held passed unjudged: here,
+// letters of two scripts in one run, in a token too short for the screen of
+// long runs to see)
+test('in a path, a segment that looks generated does not stop the screen of the other segments', () => {
+  // (two runs of three consonants, no word of code, and a Cyrillic letter
+  // with a Greek one, made at run time)
+  const CONSONANTS = 'bcdfghjklmnpqrstvwxz';
+  const CODE = new Set(['css', 'sql', 'tcp', 'udp', 'tls', 'ssl', 'ssh', 'dns', 'src', 'cmd', 'ctx', 'msg', 'pkg', 'tmp', 'cfg', 'std', 'xml']);
+  const three = () => { for (;;) { const t = pick(CONSONANTS, 3); if (!CODE.has(t)) return t; } };
+  const seg = `${three()}-${three()}`;
+  const mixed = pick(CYRILLIC, 1) + pick('\u03b1\u03b2\u03b3\u03b4\u03b5\u03b6\u03b7\u03b8', 1);
+  const shown = screenLine(`x: ${seg}/${mixed}`);
+  assert.ok(!shown.includes(seg), shown);
+  assert.ok(!shown.includes(mixed), `the other segment withheld too: ${shown}`);
+});
+
+// (the medium on the draft) a kept line is judged with the lines next to it
+// in the log, never with one far away: a readable line beside 47 lines left
+// out is not withheld for a value before them
+test('kept lines far apart in the log are screened apart', () => {
+  const v = value();
+  const lines = ['FAIL src/a.md:12', `  ${v}`, ...Array.from({length: 47}, (_, i) => `progress ${i}`), '  pqrs', ...Array.from({length: 14}, (_, i) => `more ${i}`)];
+  const out = run(lines);
+  const far = out.lines.find((l) => l.index === 49);
+  if (far != null) assert.strictEqual(far.text, '  pqrs', JSON.stringify(out.lines.map((l) => [l.index, l.text])));
+  assert.ok(!out.lines.some((l) => l.text.includes(v)));
+});
+
+test('punctuation outside ASCII does not break a word\'s reading: a Japanese sentence\'s full stop, guillemets, corner brackets', () => {
+  for (const t of ['Error: \u30c6\u30b9\u30c8\u304c\u5931\u6557\u3057\u307e\u3057\u305f\u3002',
+    'Error: \u00ab\u041e\u0448\u0438\u0431\u043a\u0430\u00bb',
+    '\u300c\u30c6\u30b9\u30c8\u300d failed']) {
+    assert.strictEqual(screenLine(t), t, t);
+  }
+});
+
+test('a path under a home folder in another script keeps its readable parts: the letters-with-digits rule is a segment\'s', () => {
+  const t = 'at /home/\u0438\u0432\u0430\u043d/proj/test1.js:5';
+  assert.strictEqual(screenLine(t), t);
+});
+
+
+// (business's hardening, 11-28: what reads outside ASCII is bounded, as an
+// ASCII run is; every value drawn at run time from its block of code points)
+const from = (lo, hi, n) => Array.from({length: n}, () => String.fromCodePoint(lo + (crypto.randomBytes(2).readUInt16BE(0) % (hi - lo + 1)))).join('');
+const withheld = (line, part) => { const s = screenLine(line); return !s.includes(part) && s.includes(WITHHELD); };
+const kept = (line) => screenLine(line) === line;
+
+test('(a) Latin letters outside ASCII are folded and judged as ASCII words: a random run is withheld, an accented word reads', () => {
+  const ext = from(0x100, 0x17f, 26);
+  assert.ok(withheld(`token: ${ext}`, ext), 'Latin Extended-A, random');
+  const full = Array.from({length: 26}, () => from(0xff21, 0xff3a, 1) + from(0xff41, 0xff5a, 1)).join('').slice(0, 26);
+  const shownFull = screenLine(`token: ${full}`);
+  assert.ok(!shownFull.includes(full) && shownFull.includes(WITHHELD), 'fullwidth Latin, random');
+  assert.ok(kept('Error: caf\u00e9 not found'));
+  assert.ok(kept('Error: \uff34\uff25\uff33\uff34 failed'), 'a fullwidth word reads');
+});
+
+test('(b) never read as symbols: Braille, emoji, marks with no letter, private use; a test runner\'s marks still read', () => {
+  for (const [what, v] of [['Braille', from(0x2801, 0x28ff, 32)], ['emoji', from(0x1f600, 0x1f64f, 20)],
+    ['marks with no letter', from(0x300, 0x36f, 6)], ['private use', from(0xe000, 0xf8ff, 8)]]) {
+    const s = screenLine(`dump ${v}`);
+    assert.ok(!s.includes(v), `${what}: ${JSON.stringify(s)}`);
+  }
+  for (const mark of ['\u25cf', '\u2715', '\u2713', '\u00d7', '\u2192', '\u2714', '\u2716']) assert.ok(kept(`  ${mark} adds two numbers`), mark);
+});
+
+test('(c) an alphabetic script\'s run reads up to 24 letters; 25 is withheld', () => {
+  assert.ok(kept(`Error: ${from(0x430, 0x44f, 24)}`), 'Cyrillic, 24');
+  const long = from(0x430, 0x44f, 25);
+  assert.ok(withheld(`Error: ${long}`, long), 'Cyrillic, 25');
+});
+
+test('(d) a Han, kana or Hangul run reads up to 32 characters; 33 is withheld; each split point splits it', () => {
+  assert.ok(kept(`Error: ${from(0x4e00, 0x9fff, 32)}`), 'Han, 32');
+  const han = from(0x4e00, 0x9fff, 33);
+  assert.ok(withheld(`Error: ${han}`, han), 'Han, 33');
+  assert.ok(kept(`Error: ${from(0xac00, 0xd7a3, 32)}`), 'Hangul, 32');
+  const hangul = from(0xac00, 0xd7a3, 33);
+  assert.ok(withheld(`Error: ${hangul}`, hangul), 'Hangul, 33');
+  // (40 in one run is withheld; split anywhere into two of 20, it reads)
+  const a = from(0x4e00, 0x9fff, 20);
+  const b = from(0x4e00, 0x9fff, 20);
+  assert.ok(withheld(`Error: ${a}${b}`, a + b), 'Han, 40 unsplit');
+  for (const sep of ['\u3002', '\u3001', '\u300c', '\u300d', '\u30fb', '\uff0c', '\uff1a', '\uff1b', '\uff01', '\uff1f', '\u3000', ' ', '.', '-', ';', '!', '?']) {
+    assert.ok(kept(`Error: ${a}${sep}${b}`), `split at U+${sep.codePointAt(0).toString(16)}`);
+  }
+});
+
+// (the medium on the draft: a re-cut that would split a withheld mark keeps
+// the mark whole, cutting the words before it shorter, so the line still says
+// a value was withheld)
+test('a withheld mark the bound would split is kept whole', () => {
+  // (letters and digits alternating, drawn at run time: a stretch the cut is
+  // in always reads as a value, so the mark always lands across the bound)
+  const v = Array.from({length: 20}, () => pick('abcdefghjkmnpqrstuvwxyz', 1) + pick('23456789', 1)).join('');
+  const out = run([`Error: ${'word '.repeat(97)}${v}`]);
+  const t = out.lines[0].text;
+  assert.ok(t.length <= 500 && t.endsWith(`${WITHHELD}\u2026`) && !t.includes(v), t.slice(-40));
+});
+
+// (the second medium on the draft, its probes made tests: every value drawn
+// at run time)
+const fromSet = (chars, n) => Array.from({length: n}, () => chars[crypto.randomBytes(1)[0] % chars.length]).join('');
+
+test('Latin letters NFKD cannot fold are bounded too; a word with them reads', () => {
+  const ipa = from(0x250, 0x2af, 40);
+  assert.ok(withheld(`token: ${ipa}`, ipa), 'IPA, random');
+  const odd = fromSet(['\u00f8', '\u00df', '\u00e6', '\u0153', '\u00f0', '\u00fe', '\u0142', '\u0111', '\u0127', '\u0131', '\u014b'], 60);
+  assert.ok(withheld(`token: ${odd}`, odd), 'unfoldable Latin letters, random');
+  const marks = `\u00f8${from(0x300, 0x36f, 20)}`;
+  assert.ok(!screenLine(`token: ${marks}`).includes(marks), 'marks piled on a letter');
+  for (const w of ['Stra\u00dfe', '\u0141\u00f3d\u017a', 'K\u00f8benhavn']) assert.ok(kept(`Error: ${w} not found`), w);
+});
+
+test('a run of symbols reads up to 4 marks; regional indicators never', () => {
+  for (const [what, v] of [['box drawing', from(0x2500, 0x257f, 60)], ['hexagrams', from(0x4dc0, 0x4dff, 60)],
+    ['math operators', from(0x2200, 0x22ff, 60)], ['regional indicators', from(0x1f1e6, 0x1f1ff, 6)]]) {
+    assert.ok(!screenLine(`dump ${v}`).includes(v), what);
+  }
+  assert.ok(kept('a \u2192\u2192\u2192\u2192 b'), 'four arrows');
+  assert.ok(!kept('a \u2192\u2192\u2192\u2192\u2192 b'), 'five');
+});
+
+test('accents written decomposed (NFD) read as the composed ones do', () => {
+  const t = 'Expected: cafe\u0301 re\u0301sume\u0301';
+  assert.strictEqual(screenLine(t), t.normalize('NFC'));
+});
+
+test('more scripts read: Tamil, Telugu, a Thai sentence, Arabic with a tatweel, Persian with a ZWNJ, halfwidth katakana with a voiced mark', () => {
+  for (const t of ['\u0baa\u0bbf\u0bb4\u0bc8', '\u0c24\u0c2a\u0c4d\u0c2a\u0c41',
+    '\u0e01\u0e32\u0e23\u0e17\u0e14\u0e2a\u0e2d\u0e1a\u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27',
+    '\u062e\u0640\u0637\u0623', '\u0645\u06cc\u200c\u0634\u0648\u062f', '\uff83\uff9e\uff70\uff80']) {
+    assert.ok(kept(`Error: ${t}`), JSON.stringify(t));
+  }
+  // (any other zero-width character still withholds the line)
+  assert.strictEqual(screenLine('Error: a\u200bb'), LINE_WITHHELD);
+});
+
+test('a test runner\'s text marks read: node --test\'s summary, a warning, a timer', () => {
+  for (const m of ['\u2139', '\u26a0', '\u23f1']) assert.ok(kept(`${m} tests 5`), m);
+});
+
+test('a duration in microseconds reads, written with either mu', () => {
+  for (const t of ['took 12\u00b5s', 'took 12\u03bcs', 'took 3.5\u00b5s']) assert.ok(kept(t), t);
+});
+
+test('the bounds count letters: a 12-syllable Hangul word written decomposed reads', () => {
+  const word = from(0xac00, 0xd7a3, 12);
+  const nfd = `Error: ${word.normalize('NFD')}`;
+  assert.strictEqual(screenLine(nfd), nfd.normalize('NFC'));
+});
+
+test('a path\'s spans after the fold land on the right characters (a ligature and an astral Latin letter)', () => {
+  const CONSONANTS = 'bcdfghjklmnpqrstvwxz';
+  const seg = `${pick(CONSONANTS, 3)}-${pick(CONSONANTS, 3)}`;
+  const t = `x: /a/\ufb00${seg}/\u{10781}x`;
+  const s = screenLine(t);
+  assert.ok(!s.includes(seg.slice(-2)), s);
+  assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s), 'no half of a pair');
+});
+
+// (business, 11-28: a token's letters outside ASCII are capped in total, so
+// pieces joined by punctuation can't lift the per-run bounds; past the cap,
+// the rest of the token goes, its readable start kept)
+test('the token cap: an alphabet\'s letters up to 32 in a token, past it the rest withheld', () => {
+  const a = from(0x430, 0x44f, 16);
+  const b = from(0x430, 0x44f, 16);
+  assert.ok(kept(`Error: ${a}-${b}`), '32 in a token');
+  const c = from(0x430, 0x44f, 20);
+  const d = from(0x430, 0x44f, 20);
+  const token = `${c}-${d}`;
+  assert.strictEqual(screenLine(`Error: ${token}`), `Error: ${token.slice(0, 33)}${WITHHELD}`, 'the 33rd letter on withheld');
+});
+
+test('the token cap: Han, kana or Hangul up to 64 in a token, past it the rest withheld', () => {
+  const p = from(0x4e00, 0x9fff, 32);
+  const q = from(0x4e00, 0x9fff, 32);
+  assert.ok(kept(`Error: ${p}\u3002${q}`), '64 in a token');
+  const r = [from(0x4e00, 0x9fff, 30), from(0x4e00, 0x9fff, 30), from(0x4e00, 0x9fff, 30)].join('\u3002');
+  assert.strictEqual(screenLine(`Error: ${r}`), `Error: ${r.slice(0, 66)}${WITHHELD}`, 'the 65th on withheld');
+});
+
+test('short digit groups inside a Han run read, counted toward its 32; longer groups are withheld', () => {
+  // (business's examples: "the 3rd test failed", "expected 3, got 2", "line 12")
+  for (const t of ['\u7b2c3\u4e2a\u6d4b\u8bd5\u5931\u8d25', '\u671f\u671b3\u4e2a\uff0c\u5b9e\u96452\u4e2a', '\u7b2c12\u884c']) assert.ok(kept(`Error: ${t}`), t);
+  assert.ok(kept('Error: \u7b2c123456\u884c'), 'six digits');
+  assert.ok(!kept('Error: \u7b2c1234567\u884c'), 'seven');
+  const head = from(0x4e00, 0x9fff, 20);
+  assert.ok(kept(`Error: ${head}12345\u884c`), '26 with its digits');
+  const longer = from(0x4e00, 0x9fff, 28);
+  assert.ok(!kept(`Error: ${longer}12345\u884c`), '34 with its digits');
+});
+
+// (the third medium on the draft, its probes made tests: every value drawn at
+// run time)
+test('a microsecond duration reads only with a plain number: a long digit run before it is withheld', () => {
+  const long = Array.from({length: 30}, () => crypto.randomBytes(1)[0] % 10).join('');
+  assert.ok(!kept(`took ${long}\u00b5s`), 'micro');
+  assert.ok(!kept(`took ${long}\u03bcs`), 'mu');
+});
+
+test('symbols are capped per token too: short runs repeated within one token are withheld past 4', () => {
+  const MARKS = ['\u2190', '\u2191', '\u2192', '\u2193', '\u2022', '\u25c6', '\u25c7', '\u25a0', '\u25a1'];
+  const token = Array.from({length: 10}, () => fromSet(MARKS, 4)).join('.');
+  assert.ok(!kept(`x ${token}`), JSON.stringify(screenLine(`x ${token}`)));
+});
+
+test('marks on Han, kana or Hangul never read; an alphabet\'s letter carries at most one', () => {
+  const han = Array.from({length: 10}, () => from(0x4e00, 0x9fff, 1) + from(0x300, 0x36f, 1)).join('');
+  assert.ok(!kept(`x ${han}`), 'a mark on each Han');
+  const greek = Array.from({length: 10}, () => from(0x3b1, 0x3c9, 1) + from(0x300, 0x36f, 2)).join('');
+  assert.ok(!kept(`x ${greek}`), 'two marks on each Greek letter');
+});
+
+test('halfwidth sound marks count toward the token cap', () => {
+  const token = Array.from({length: 10}, () => fromSet(['\uff9e', '\uff9f'], 30)).join('.');
+  assert.ok(!kept(`x ${token}`), 'a long run of halfwidth sound marks');
+});
+
+test('digits before a Han run count toward its 32 and the token\'s 64', () => {
+  const digits = Array.from({length: 6}, () => crypto.randomBytes(1)[0] % 10).join('');
+  assert.ok(!kept(`Error: ${digits}${from(0x4e00, 0x9fff, 32)}`), '6 digits then 32 Han: 38 in the run');
+  assert.ok(kept(`Error: 3${from(0x4e00, 0x9fff, 20)}`), 'a short count before a short run reads');
+});
+
+test('a ZWNJ beside a tatweel or a vowel mark in Arabic is no unreadable character', () => {
+  for (const t of ['\u0645\u0640\u200c\u0634\u0648\u062f', '\u0645\u064e\u200c\u0634\u0648\u062f']) assert.ok(kept(`Error: ${t}`), JSON.stringify(t));
+});
+
+test('a decomposed line that fits once composed is whole: not cut, its place kept', () => {
+  const v = value();
+  const words = `${'cafe\u0301 '.repeat(90)}`.trimEnd();
+  const out = run([`AssertionError: '${v}' == 'x'`, `+ ${words}`, `- 'x'`]);
+  const b = out.details == null ? null : out.details.blocks[0];
+  assert.ok(b != null && b.cut === false, JSON.stringify(b && {cut: b.cut, places: b.places}));
+});

@@ -29,8 +29,23 @@ ended them before it.
 
 The values are log text and can hold what a test compared. A value the screen
 judges not to be words, a number or a name is withheld as `<withheld>`, or, for
-a whole line, `<value line withheld>`. The screen covers `details` only: a line
-in `lines` is not screened.
+a whole line, `<value line withheld>`. The same screen covers `lines`: each
+step's kept lines are judged together, in log order, and a value withheld there
+reaches the failure signature as `<withheld>` (`rules` 6, so a cache keyed on the
+rules is rebuilt).
+
+Words in most scripts (including Chinese, Japanese, Korean, Cyrillic, Arabic
+and the Indic scripts) read as words, and common symbols (a test runner's `●`,
+`✕`, an arrow) as symbols; words in a script the screen doesn't know are
+withheld. A line with an invisible formatting character is withheld whole,
+except a zero-width non-joiner inside Arabic-script words. A token mixing letters outside Latin with digits, a run of
+letters from two scripts, a run of an alphabet longer than 24 letters or of
+Han, kana or Hangul longer than 32 characters, Braille, emoji and private-use
+characters are withheld; accented and fullwidth Latin letters are judged as
+the ASCII ones. The screen can't tell a value written in the letters of a
+script other than Latin from ordinary text: such a value of up to 64 characters
+(Chinese, Japanese, Korean and other scripts written without spaces) or 32
+letters (other alphabets) in a token may not be screened.
 
 This part does not redact; pass its output through ch-step-redact, as the pack
 does. The screen is a second layer, not a guarantee: a short secret, one written
