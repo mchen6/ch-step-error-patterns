@@ -34,8 +34,11 @@ step's kept lines are judged together, in log order, and a value withheld there
 reaches the failure signature as `<withheld>` (`rules` 6, so a cache keyed on the
 rules is rebuilt).
 
-Words in any script read as words, and symbols (a test runner's `●`, `✕`, an
-arrow) as symbols. A token mixing letters outside Latin with digits, a run of
+Words in most scripts (including Chinese, Japanese, Korean, Cyrillic, Arabic
+and the Indic scripts) read as words, and common symbols (a test runner's `●`,
+`✕`, an arrow) as symbols; words in a script the screen doesn't know are
+withheld. A line with an invisible formatting character is withheld whole,
+except a zero-width non-joiner inside Arabic-script words. A token mixing letters outside Latin with digits, a run of
 letters from two scripts, a run of an alphabet longer than 24 letters or of
 Han, kana or Hangul longer than 32 characters, Braille, emoji and private-use
 characters are withheld; accented and fullwidth Latin letters are judged as
