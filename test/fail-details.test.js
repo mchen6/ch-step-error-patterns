@@ -24,7 +24,8 @@ test('(a) a FAIL naming a file and line keeps the lines indented under it', () =
     ['FAIL Article/PythonBasis/python13/2.md:339', 'error'],
     ['  timeout after 30s', 'error'],
     ['FAIL Article/PythonBasis/python2/Type_of_data.md:442', 'error'],
-    ['  File "/tmp/tmpjg271vyh.py", line 4', 'stack'],
+    // (a generated name in a path is withheld, as the screen does)
+    ['  File "/tmp<withheld>", line 4', 'stack'],
     ['    print(f\'{data[\'name\']}\')', 'error']
   ]);
 });

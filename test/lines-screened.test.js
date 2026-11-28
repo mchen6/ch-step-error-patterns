@@ -87,3 +87,30 @@ test('the rules name this version: 6', () => {
   assert.strictEqual(RULES, 6);
   assert.strictEqual(run(['Error: boom']).rules, 6);
 });
+
+// (business's choice, 11-28, for lines and details alike: words in any script
+// read as words, symbols are kept, and a token mixing letters and digits in a
+// script other than ASCII is withheld)
+const {screenLine} = require('../lib/values');
+const pick = (alphabet, n) => [...crypto.randomBytes(n)].map((b) => alphabet[b % alphabet.length]).join('');
+const CYRILLIC = 'абвгдежзийклмнопрстуфхцчшщэюяАБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЭЮЯ';
+
+test('a run of one script\'s letters reads as words: Cyrillic, Chinese, Japanese (kana and kanji together)', () => {
+  for (const words of ['Ошибка подключения к базе', '测试失败', 'テストが失敗しました', 'Δοκιμή απέτυχε']) {
+    assert.strictEqual(screenLine(`Error: ${words}`), `Error: ${words}`, words);
+  }
+  const out = run(['Error: Ошибка подключения к базе']);
+  assert.ok(out.lines.some((l) => l.text === 'Error: Ошибка подключения к базе'), JSON.stringify(out.lines));
+});
+
+test('a symbol-only token reads: a test runner\'s marks', () => {
+  for (const mark of ['●', '✕', '✓', '×', '→']) assert.strictEqual(screenLine(`  ${mark} adds two numbers`), `  ${mark} adds two numbers`, mark);
+});
+
+test('a token mixing letters and digits in a script other than ASCII is withheld', () => {
+  // (made at run time: Cyrillic letters and digits, interleaved)
+  const t = [...pick(CYRILLIC, 8)].map((c, i) => c + String(i % 10)).join('');
+  const shown = screenLine(`Error: session ${t} rejected`);
+  assert.ok(!shown.includes(t), shown);
+  assert.ok(shown.includes(WITHHELD), shown);
+});

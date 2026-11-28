@@ -53,8 +53,8 @@ test('a Rust panic with a thread id is a panic: its message is kept beside it', 
   }
 });
 
-test('these rules are version 5: a signature made under 4 is read again', () => {
-  assert.strictEqual(RULES, 5);
+test('these rules are version 6: a signature made under 5 is read again', () => {
+  assert.strictEqual(RULES, 6);
 });
 
 test('a file named after a severity is a runner\'s tag; a severity alone is the line\'s own', () => {

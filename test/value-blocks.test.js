@@ -60,7 +60,7 @@ test('`lines` are the same whatever the values are: nothing here can move a sign
 
 test('a log with no failed assertion has no details', () => {
   assert.ok(!('details' in run(['npm error code ELIFECYCLE', 'something else'])));
-  assert.deepStrictEqual(extractErrors([], 40), {failingStep: null, lines: [], truncated: false, rules: 5});
+  assert.deepStrictEqual(extractErrors([], 40), {failingStep: null, lines: [], truncated: false, rules: 6});
 });
 
 test('the block ends at the next test: a passing line, another failure, a frame', () => {

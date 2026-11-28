@@ -29,8 +29,10 @@ ended them before it.
 
 The values are log text and can hold what a test compared. A value the screen
 judges not to be words, a number or a name is withheld as `<withheld>`, or, for
-a whole line, `<value line withheld>`. The screen covers `details` only: a line
-in `lines` is not screened.
+a whole line, `<value line withheld>`. The same screen covers `lines`: each
+step's kept lines are judged together, in log order, and a value withheld there
+reaches the failure signature as `<withheld>` (`rules` 6, so a cache keyed on the
+rules is rebuilt).
 
 This part does not redact; pass its output through ch-step-redact, as the pack
 does. The screen is a second layer, not a guarantee: a short secret, one written

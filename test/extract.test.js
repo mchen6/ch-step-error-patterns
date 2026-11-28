@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
+const {screenBlock} = require('../lib/values');
 const {extractErrors} = require('../lib/patterns');
 const {CountinghouseError} = require('countinghouse/lib/countinghouse-error');
 // the handler as the runtime calls it: (input, ctx), ctx.error the runtime's
@@ -115,7 +116,7 @@ test('falls back to the tail when nothing matches', () => {
   const out = extractErrors([{name: '(top)', lines: ['set up']}, {name: 'Run make', lines}, {name: 'Post job cleanup', lines: ['bye']}], 40);
   assert.strictEqual(out.failingStep, null);
   assert.deepStrictEqual(out.lines.map((l) => [l.step, l.index, l.kind]), lines.slice(5).map((_, i) => ['Run make', i + 5, 'tail']));
-  assert.deepStrictEqual(extractErrors([], 40), {failingStep: null, lines: [], truncated: false, rules: 5});
+  assert.deepStrictEqual(extractErrors([], 40), {failingStep: null, lines: [], truncated: false, rules: 6});
 });
 
 test('caps at maxLines and sets truncated, keeping the failing step\'s exit and first errors', () => {
@@ -271,12 +272,14 @@ test('a record left out ends no traceback and fills no frame window', () => {
 });
 
 test('JSON embedded in a picked line is cut to 200 characters', () => {
-  const blob = JSON.stringify({jobTimeout: 3600000, moduleSandbox: 'audit', more: 'x'.repeat(2000)});
+  // (readable filler: the lines pass the screen, which keeps words and withholds
+  // only the stretch the cut is in)
+  const blob = JSON.stringify({jobTimeout: 3600000, moduleSandbox: 'audit', more: 'word '.repeat(400)});
   const line = `AssertionError [ERR_ASSERTION]: the server exited: stderr ${blob} -- end`;
   const out = extractErrors([{name: 'Run x', lines: [line]}], 40);
   const text = nonTail(out)[0].text;
   const at = line.indexOf('{');
-  assert.strictEqual(text, `${line.slice(0, at + 200)}…`, 'a plain …: no count of what was cut, which would change the signature');
+  assert.strictEqual(text, screenBlock([`${line.slice(0, at + 200)}…`])[0], 'a plain …: no count of what was cut, which would change the signature');
   const short = 'Error: got {"a":1} instead';
   assert.strictEqual(extractErrors([{name: 'Run x', lines: [short]}], 40).lines[0].text, short, 'a short one is kept whole');
 });
@@ -289,9 +292,9 @@ test('Node\'s internal frames are skipped, and do not use up the two frames an e
 });
 
 test('the output names its rules version, so a scenario can tell old extractions from new', async () => {
-  assert.strictEqual(extractErrors([{name: 'Run x', lines: ['Error: x']}], 40).rules, 5);
+  assert.strictEqual(extractErrors([{name: 'Run x', lines: ['Error: x']}], 40).rules, 6);
   const {output} = await extract({steps: [{name: 'Run x', lines: ['Error: x']}]});
-  assert.strictEqual(output.rules, 5);
+  assert.strictEqual(output.rules, 6);
 });
 
 // The reviewer's review of #1 (2026-11-13).
@@ -302,20 +305,21 @@ test('a record whose e is a whole stack is its first line', () => {
 });
 
 test('every line is at most 500 characters, taken in and given back, cut with …', () => {
-  const long = `Error: ${'x'.repeat(2000)}`;
+  const long = `Error: ${'word '.repeat(400)}`;
   const out = extractErrors([{name: 'Run x', lines: [long, ...Array.from({length: 20}, (_, i) => `t${i} ${'y'.repeat(900)}`)]}], 40);
   assert.ok(out.lines.length > 1);
   for (const l of out.lines) assert.ok(l.text.length <= 500, String(l.text.length));
-  assert.strictEqual(out.lines[0].text, `${long.slice(0, 499)}…`);
+  // (cut at the bound, screened, and cut again where a withheld mark made it longer)
+  assert.ok(out.lines[0].text.startsWith(`Error: ${'word '.repeat(90)}`) && out.lines[0].text.endsWith('…'), out.lines[0].text);
 });
 
 test('a record cut by the line bound (as ch-step-log-clean cuts it) is still read as a record', () => {
-  const full = record({pid: 9612, level: 50, e: `worker exit on error: ENOENT ${'z'.repeat(700)}`, msg: ''});
+  const full = record({pid: 9612, level: 50, e: `worker exit on error: ENOENT ${'missing file '.repeat(60)}`, msg: ''});
   const cut = `${full.slice(0, 499)}…`;
   // bunyan's own order: name, hostname, pid, level, msg, time, v
   const info = JSON.stringify({name: 'countinghouse', hostname: 'runner1', pid: 1, level: 30, msg: `tick ${'q'.repeat(700)}`, time: 't', v: 0});
   const out = extractErrors([{name: 'Run x', lines: [cut, `${info.slice(0, 499)}…`]}], 40);
-  assert.deepStrictEqual(nonTail(out).map((l) => [l.kind, l.text.slice(0, 40)]), [['error', 'worker exit on error: ENOENT zzzzzzzzzzz']]);
+  assert.deepStrictEqual(nonTail(out).map((l) => [l.kind, l.text.slice(0, 40)]), [['error', 'worker exit on error: ENOENT missing fil']]);
   assert.ok(!out.lines.some((l) => l.index === 1), 'a cut info record is dropped too');
 });
 
@@ -400,9 +404,10 @@ test('mocha pairing needs deeper indentation and an error name: other numbered l
 });
 
 test('a cut never splits a surrogate pair', () => {
-  const line = `Error: ${'a'.repeat(491)}\u{1F600}${'b'.repeat(10)}`;
+  const line = `Error: ${'word '.repeat(98)}w\u{1F600}${'b'.repeat(10)}`;
   const text = extractErrors([{name: 'Run x', lines: [line]}], 40).lines[0].text;
-  assert.strictEqual(text, `Error: ${'a'.repeat(491)}…`);
+  assert.ok(text.length <= 500 && text.startsWith(`Error: ${'word '.repeat(90)}`) && text.endsWith('…'), text);
+  assert.ok(!/[\uD800-\uDFFF]/.test(text), 'no half of a pair');
 });
 
 // The reviewer's re-review of #1 (2026-11-13).
