@@ -114,3 +114,14 @@ test('a token mixing letters and digits in a script other than ASCII is withheld
   assert.ok(!shown.includes(t), shown);
   assert.ok(shown.includes(WITHHELD), shown);
 });
+
+// (a path segment that looks generated used to be withheld alone, so a
+// character outside ASCII elsewhere in the same path passed: both go now)
+test('in a path, a segment that looks generated does not stop the screen of the other segments', () => {
+  // (two runs of consonants a segment holds, made at run time)
+  const CONSONANTS = 'bcdfghjklmnpqrstvwxz';
+  const seg = `${pick(CONSONANTS, 4)}-${pick(CONSONANTS, 4)}`;
+  const shown = screenLine(`x: ${seg}/café`);
+  assert.ok(!shown.includes(seg), shown);
+  assert.ok(!shown.includes('é'), `the accented letter withheld too: ${shown}`);
+});
